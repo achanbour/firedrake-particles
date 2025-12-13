@@ -112,11 +112,10 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
             # -- Process failed particles -> Phase 1 -- 
             # Process active-failed particles though a nested loop that moves them to the correct crossing facet
             # turning them into active-passed particles.
-            breakpoint()
             t_cross_failed = t_cross[~passed_local]
             crossed_edges_failed = crossed_edges[~passed_local]
             if len(failed_global) > 0:
-                print("\nGoing into Phase 1 to move failed particles to crossing facet...")
+                print("\nGoing into phase 1 to move failed particles to crossing facet...")
                 t_cross_final, crossed_edges_final, ref_coords_final = \
                     move_failed_particles_to_facet(
                     failed_global, t_cross_failed, crossed_edges_failed,
@@ -135,15 +134,25 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
                 print(f"  new ref_coords: {ref_coords_register[failed_global]}")
 
             else:
-                print("Skipping Phase 1 as there are no failed particles.")
+                print("Skipping phase 1 as there are no failed particles.")
 
             # At this point all the particles are now active-passed particles
             # TODO
             # 1) After updating all ref coords, run barycentric test again to ensure all particles are within their cells
+            bary_register = ref_cell.compute_barycentric_coordinates(np.array(ref_coords_register))
+            tol = 1e-12
+            for i, coords_i in enumerate(bary_register):
+                if np.any(coords_i < -tol):
+                    print(f"Error: Particle {i} is still outside its parent cell after the phase 1 update.")
+                    break
+            else:
+                print("\nPassed barycentric test: all particles are now within their parent cells after the phase 1 update.")
+            
+            breakpoint()
             # 2) Move particles to neighbouring cells using the crossed_edges info
             # How much of the VOM needs to be updated here?
-            # - update the reference coordinates Function (otherwise the next assemble/interpolate update will give wrong results)
             # - modify parent cell information
+            # update the reference coordinates Function (otherwise the next assemble/interpolate update will give wrong results)
             # - recompute inverse Jacobian using new parent cell ownerhsip
             # 4) Re-enter the outer loop with new ref. coords., parent cells and remaining dt_left
     
@@ -266,8 +275,6 @@ def move_failed_particles_to_facet(
 
         passed_idx = still_failed[passed_mask]
         failed_idx = still_failed[~passed_mask]
-
-        breakpoint()
 
         # Record values for newly passed particles
         t_cross_final[passed_idx] = dt_curr[passed_mask]
