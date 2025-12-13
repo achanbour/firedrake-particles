@@ -1,14 +1,26 @@
 from firedrake import UnitSquareMesh
 from particle_tracking.topology import find_next_cell
 
+
+def test_find_next_cell_is_pure():
+    """Test that `find_next_cell` is a pure function (no side effects)."""
+    mesh = UnitSquareMesh(2, 2)
+
+    for c in range(mesh.num_cells()):
+        for lf in range(3):
+            a = find_next_cell(mesh, c, lf)
+            b = find_next_cell(mesh, c, lf)
+            assert a == b
+
 def test_find_next_triangle_boundary_vs_interior():
+    """Test that `find_next_cell` correctly identifies boundary vs interior facets."""
     # A 2x2 mesh has 4 squares each split into 2 triangles -> 8 cells.
     mesh = UnitSquareMesh(2, 2) 
     facet_info = mesh.cell_to_facets.data_ro
 
     for c in range(mesh.num_cells()):
         for lf in range(3):
-            is_interior = facet_info[c, lf][0]
+            is_interior = facet_info[c][lf][0]
             nxt = find_next_cell(mesh, c, lf)
 
             if not is_interior:
@@ -21,13 +33,34 @@ def test_find_next_triangle_boundary_vs_interior():
                 assert nxt != c
                 assert 0 <= nxt < mesh.num_cells()
 
-def test_find_next_triangle_adjacency_symmetry():
+def test_find_next_triangle_unique_neighbour():
+    """Test that `find_next_cell` returns a unique neighbouring cell 
+    across interior facets."""
     mesh = UnitSquareMesh(2, 2)
     facet_info = mesh.cell_to_facets.data_ro
 
     for c in range(mesh.num_cells()):
         for lf in range(3):
-            is_interior = facet_info[c, lf][0]
+            if facet_info[c][lf][0] != 1:
+                continue # Skip boundary facets
+
+            nxt = find_next_cell(mesh, c, lf)
+
+            matches = [
+                lf_ for lf_ in range(3)
+                if find_next_cell(mesh, nxt, lf_) == c
+            ]
+            assert len(matches) == 1
+
+
+def test_find_next_triangle_adjacency_symmetry():
+    """Test that `find_next_cell` is symmetric across interior facets."""
+    mesh = UnitSquareMesh(2, 2)
+    facet_info = mesh.cell_to_facets.data_ro
+
+    for c in range(mesh.num_cells()):
+        for lf in range(3):
+            is_interior = facet_info[c][lf][0]
             if not is_interior:
                 continue # Skip boundary facets
 
@@ -47,6 +80,8 @@ def test_find_next_triangle_adjacency_symmetry():
             )
 
 def test_find_next_triangle_matches_interior_facets():
+    """Test that `find_next_cell` matches Firedrake's internal interior 
+    facet connectivity."""
     mesh = UnitSquareMesh(2, 2)
 
     facet_cells = mesh.interior_facets.facet_cell
