@@ -2,6 +2,7 @@ from firedrake import *
 import numpy as np
 from update_vom import VertexOnlyMeshUpdater
 from non_interacting_particles_phys import move_particles_in_phys_space
+from particle_tracking.topology import find_next_cell
 from ufl.differentiation import ReferenceGrad
 
 np.random.seed(42)
@@ -39,6 +40,9 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
 
         # Get the current reference coordinates Function
         ref_coords_fn = pmesh.reference_coordinates
+
+        # Get the current parent cell ownership
+        parent_cells = pmesh.topology.cell_parent_cell_list # ID of containing cell for each point in VOM order
 
         # Per-particle tracking loop variables
         dt_left = np.full(N, dt) # remaining time for the current time step
@@ -150,8 +154,29 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
             
             breakpoint()
             # 2) Move particles to neighbouring cells using the crossed_edges info
-            # How much of the VOM needs to be updated here?
-            # - modify parent cell information
+            # - Find neighbouring cells
+            next_parent_cells = np.full(N, -1, dtype=int)
+            # FIXME: `next_parent_cells` is initialized as a 1D array of shape (num_vertices,) where Firedrake's internal
+            # `cell_parent_cell_list` is a 2D array of shape (num_vertices, 1). It may be desirable to keep the same tensor format for consistency.
+
+            for i, parent_cell in enumerate(parent_cells):
+                parent_cell = parent_cell[0] # extract cell ID from array
+                edge_id = crossed_edges[i]
+                if edge_id is None:
+                    # The particle did not cross any edge so it stays in the same cell
+                    next_parent_cells[i] = parent_cell
+                    continue
+                
+                # Find neighbouring cell across the crossed edge
+                next_cell = find_next_cell(mesh, parent_cell, edge_id)
+                if next_cell is None:
+                    print(f"Particle {i} attempted to cross boundary facet from cell {parent_cell}")
+                    # keep next_parent_cells[i] as -1 to indicate boundary hit
+                else:
+                    next_parent_cells[i] = next_cell
+            breakpoint()
+            # - modify parent cell ownership in VOM
+            # -> How much of the particle VOM needs to be modified?
             # update the reference coordinates Function (otherwise the next assemble/interpolate update will give wrong results)
             # - recompute inverse Jacobian using new parent cell ownerhsip
             # 4) Re-enter the outer loop with new ref. coords., parent cells and remaining dt_left
