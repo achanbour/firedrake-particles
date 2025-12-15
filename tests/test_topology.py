@@ -1,7 +1,9 @@
-from firedrake import UnitSquareMesh
+from firedrake import UnitSquareMesh, PeriodicUnitSquareMesh
 from particle_tracking.topology import find_next_cell
 
-
+"""
+The series of unit tests below assume a triangular mesh.
+"""
 def test_find_next_cell_is_pure():
     """Test that `find_next_cell` is a pure function (no side effects)."""
     mesh = UnitSquareMesh(2, 2)
@@ -12,7 +14,7 @@ def test_find_next_cell_is_pure():
             b = find_next_cell(mesh, c, lf)
             assert a == b
 
-def test_find_next_triangle_boundary_vs_interior():
+def test_find_next_cell_boundary_vs_interior():
     """Test that `find_next_cell` correctly identifies boundary vs interior facets."""
     # A 2x2 mesh has 4 squares each split into 2 triangles -> 8 cells.
     mesh = UnitSquareMesh(2, 2) 
@@ -33,7 +35,7 @@ def test_find_next_triangle_boundary_vs_interior():
                 assert nxt != c
                 assert 0 <= nxt < mesh.num_cells()
 
-def test_find_next_triangle_unique_neighbour():
+def test_find_next_cell_unique_neighbour():
     """Test that `find_next_cell` returns a unique neighbouring cell 
     across interior facets."""
     mesh = UnitSquareMesh(2, 2)
@@ -52,8 +54,7 @@ def test_find_next_triangle_unique_neighbour():
             ]
             assert len(matches) == 1
 
-
-def test_find_next_triangle_adjacency_symmetry():
+def test_find_next_cell_adjacency_symmetry():
     """Test that `find_next_cell` is symmetric across interior facets."""
     mesh = UnitSquareMesh(2, 2)
     facet_info = mesh.cell_to_facets.data_ro
@@ -79,7 +80,7 @@ def test_find_next_triangle_adjacency_symmetry():
                 f"but no facet of {nxt} points back to {c}"
             )
 
-def test_find_next_triangle_matches_interior_facets():
+def test_find_next_cell_matches_interior_facets():
     """Test that `find_next_cell` matches Firedrake's internal interior 
     facet connectivity."""
     mesh = UnitSquareMesh(2, 2)
@@ -96,3 +97,12 @@ def test_find_next_triangle_matches_interior_facets():
 
         # c1 -> c0
         assert find_next_cell(mesh, c1, lf1) == c0
+
+def test_find_next_cell_periodic_mesh():
+    """Test that `find_next_cell` works correctly on a periodic mesh."""
+    mesh = PeriodicUnitSquareMesh(3, 3, direction='both')
+    facet_info = mesh.cell_to_facets.data_ro
+
+    assert (facet_info[..., 0] == 1).all(), \
+    "Expected all facets to be interior, but found boundary facets"
+
