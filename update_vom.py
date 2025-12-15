@@ -1,115 +1,5 @@
 import numpy as np
 
-class RebuildVertexOnlyMesh:
-    """
-    A VertexOnlyMesh that rebuilds itself when coordinates change exactly how Firedrake
-    builds it internally: using _pic_swarm_in_mesh -> VertexOnlyMeshTopology ->
-    make_vom_from_vom_topology.
-
-    This produces a brand-new fully consistent VOM.
-    """
-
-    def __init__(self, vom, parent_mesh, redundant=True, tolerance=None):
-        self.vom = vom                 
-        self.parent_mesh = parent_mesh
-        self.redundant = redundant
-        self.tolerance = tolerance or parent_mesh.tolerance
-    
-    def _build_new_vom(self, new_coords):
-        """Rebuild the internal VOM from new coordinates."""
-        from firedrake.mesh import _pic_swarm_in_mesh, VertexOnlyMeshTopology, make_vom_from_vom_topology
-        
-        # Step 1: recompute the PIC swarm 
-        swarm, input_ordering_swarm, n_missing = _pic_swarm_in_mesh(
-            self.parent_mesh,
-            np.asarray(new_coords, float),
-            tolerance=self.tolerance,
-            redundant=self.redundant,
-            exclude_halos=False,
-        )
-
-        # Step 2: build the new VOM topology
-        topology = VertexOnlyMeshTopology(
-            swarm,
-            self.parent_mesh.topology,
-            name=swarm.getName(),
-            reorder=False,
-            input_ordering_swarm=input_ordering_swarm,
-        )
-
-        # Step 3: Build the VOM from the new topology
-        new_vom = make_vom_from_vom_topology(
-            topology,
-            name=self.vom.name,      
-            tolerance=self.tolerance,
-        )
-        new_vom._parent_mesh = self.parent_mesh
-
-        return new_vom
-
-    def update(self, new_coords):
-        # Build a new VOM
-        new_vom = self._build_new_vom(new_coords)
-
-        # Swap the reference to the new VOM
-        self.vom = new_vom
-        return new_vom
-
-    def __getattr__(self, name):
-        # Forward all attributes to underlying VOM
-        if hasattr(self.vom, name):
-            return getattr(self.vom, name)
-        raise AttributeError(name)
-
-# class DynamicVertexOnlyMesh:
-#     """
-#     A VertexOnlyMesh that rebuilds itself when coordinates change. (same as above)
-#     """
-#     def __init__(self, parent_mesh, coords, *, redundant=True, tolerance=None):
-#         self.parent_mesh = parent_mesh
-#         self.coords = np.asarray(coords, float)
-#         self.redundant = redundant
-#         self.tolerance = tolerance
-
-#         self._vom = None
-#         self._rebuild()
-
-#     @property
-#     def vom(self):
-#         """Return the underlying VOM"""
-#         return self._vom
-    
-#     # @property
-#     # def coordinates(self):
-#     #     """Return the coordinate field of the underlying VOM"""
-#     #     return self._vom.coordinates
-    
-#     # Update coordinates + rebuild everything
-#     def update(self, new_coords):
-#         self.coords = np.asarray(new_coords, float)
-#         self._rebuild()
-
-#     # Internal VOM rebuild
-#     def _rebuild(self):
-#         """Recompute parent mesh embedding and topoology"""
-#         new_vom = VertexOnlyMesh(
-#             self.parent_mesh,
-#             self.coords,
-#             tolerance=self.tolerance,
-#             redundant=self.redundant,
-#             missing_points_behaviour="error",
-#         )
-#         # Overwrite all mesh internals with the newly created VOM
-#         # The old VOM gets garbage-collected as long as nothing else holds reference to it (for example old function spaces)
-#         self.__dict__["_vom"] = new_vom # equivalent to `self._vom = new_vom` but bypasses `__getattr__` by writing directly into attribute dict.
-
-
-#     def __getattr__(self, name):
-#         # Forward all attributes to underlying VOM
-#         if hasattr(self._vom, name):
-#             return getattr(self._vom, name)
-#         raise AttributeError(name)
-
 class VertexOnlyMeshUpdater:
     """
     An in-place updater of a VertexOnlyMesh
@@ -160,10 +50,70 @@ class VertexOnlyMeshUpdater:
         self._update_dmswarm_fields(embedding)
 
         # Step 3: Invalidate topological properties in VertexOnlyMeshTopology
-        self.invalidate_topology_properties()
+        self._invalidate_topology_properties()
 
         # Step 4: Update the coordinates and reference coordinates Functions
         self._update_coordinates(embedding)
+    
+    def update_ref_view(self, next_parent_cells, new_refcoords):
+        """A reference-only update method:
+        Updates the parent cell ownership and reference coordinates only assuming that the new pair 
+        (parent cell, ref coords) is geometrically correct.
+        """
+        swarm = self.vom.topology_dm
+        vom_to_swarm = self.vom.cell_closure[:, -1] # VOM cell ID -> DMSwarm point ID
+
+        # NOTE: Swarm fields are in DMSwarm ordering but `next_parent_cells` and `new_refcoords` are in VOM ordering.
+
+        next_parent_cells = np.asarray(next_parent_cells, dtype=int).reshape((-1, 1))
+        new_refcoords = np.asarray(new_refcoords, dtype=float)
+
+        # Update Firedrake parent cell numbers
+        arr = swarm.getField("parentcellnum")
+        arr[vom_to_swarm, 0] = next_parent_cells[:, 0]
+        swarm.restoreField("parentcellnum")
+
+        # Update DMSwarm parent cell numbers (uses plex numbering)
+        cell_id_name = swarm.getCellDMActive().getCellID()
+        arr = swarm.getField(cell_id_name)
+
+        plex_ids = self.parent_mesh.topology.cell_closure[
+            next_parent_cells.reshape(-1), -1
+        ].reshape((-1, 1))
+
+        arr[vom_to_swarm, :] = plex_ids
+        swarm.restoreField(cell_id_name)
+
+        # Update reference coordinates
+        arr = swarm.getField("refcoord")
+        arr[vom_to_swarm, :] = new_refcoords
+        swarm.restoreField("refcoord")
+        
+        # 4) Invalidate cached topology
+        # NOTE: Invalidating caches causes them to be recomputed on next access,
+        # but we haven't updated all the fields at this stage yet.
+        # Instead of invalidating all properties by calling `self.invalidate_topology_properties()`
+        # we only delete the cached properties that depend on parent cell ownership.
+        topology = self.vom.topology
+        for name in (
+            "cell_parent_cell_list",
+            "cell_parent_cell_map",
+            "cell_parent_base_cell_list",
+            "cell_parent_base_cell_map",
+            "cell_parent_extrusion_height_list",
+            "cell_parent_extrusion_height_map",
+        ):
+            if name in topology.__dict__:
+                del topology.__dict__[name]
+
+            if name in self.vom.__dict__:
+                del self.vom.__dict__[name]
+
+        # 5) Update reference coordinates Function
+        # NOTE: Since new_ref_coords is already in VOM ordering, AND assuming the VOM does not get reodered,
+        # we can bypass the `dmcommon.reordered_coords` and directly update the Function dat array.
+        ref_coords_func = self.vom.reference_coordinates
+        ref_coords_func.dat.data[:] = new_refcoords
     
     def _recompute_embedding(self, new_coords, tolerance, redundant, exclude_halos):
         from firedrake.mesh import _parent_mesh_embedding
@@ -185,7 +135,7 @@ class VertexOnlyMeshUpdater:
             remove_missing_points=False,
         )
 
-        # `_parent_mesh_embedding` returns point data in input order
+        # `_parent_mesh_embedding` expects data in input order
 
         return dict(
         coords=coords_embedded,
@@ -223,7 +173,7 @@ class VertexOnlyMeshUpdater:
         # inv[emb_input] = np.arange(len(emb_input))
         # order = inv[swarm_gid]
 
-        # NOTE: Fields currently not updated:
+        # NOTE" Fields currently not updated:
         # - DMSwarm_rank
         # - globalindex (unique ID for each DMSwarm point)
         # - inputrank (MPI rank at which the input point coordinates were supplied)
@@ -268,7 +218,7 @@ class VertexOnlyMeshUpdater:
 
         # TODO: build SF between primary swarm and updated swarm
     
-    def invalidate_topology_properties(self):
+    def _invalidate_topology_properties(self):
         # There's a bunch of topological attributes using `topology_dm` that get computed in
         # `AbstractMeshTopology __init__()` - do they need to be invalidated now that the DMSwarm fields have changed?
         # There's a field called `self._dm_renumbering` which is computed by `_renumber_entities`
@@ -341,8 +291,9 @@ class VertexOnlyMeshUpdater:
                                                 (topology.num_vertices(), gdim))
         coords_func.dat.data[:] = coords_data
 
-        # Reset mesh-geometry properties so they rebuild from the updated coordinates
+        # Reset mesh-geometry properties so they are rebuilt from the updated coordinates
         self.vom._spatial_index = None
         self.vom._bounding_box_coords = None
         self.vom._saved_coordinate_dat_version = self.vom.coordinates.dat.dat_version
+
 
