@@ -3,7 +3,10 @@ def find_next_cell(mesh, cell, local_facet_id):
     
     Returns None if the facet is on the domain boundary.
     """
-    facet_info = mesh.cell_to_facets.data_ro[cell][local_facet_id] # shape (num_cells, num_local_facets, 2) where the 3rd entry is[is_exterior, marker]
+
+    # `cell_to_facets`` has shape (num_cells, num_local_facets, 2) 
+    # where the 3rd entry is[is_exterior, subdomain marker]
+    facet_info = mesh.cell_to_facets.data_ro[cell][local_facet_id]
     is_exterior = facet_info[0]
     if not bool(is_exterior):
         return None # boundary facets
