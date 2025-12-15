@@ -34,7 +34,6 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
         # so that we don't need to re-define FunctionSpaces and Functions every time.
         TFS_vom = TensorFunctionSpace(pmesh, "DG", 0) # Tensor FS for the Jacobian inverse
         invJ_vom = Function(TFS_vom)
-        invJ_vom.interpolate(invJ_expr)
 
         FS_vom = FunctionSpace(pmesh, "DG", 0) # Scalar FS for time steps
 
@@ -49,21 +48,22 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
 
         # Run outer loop while there are active particles (those that have not yet finished their dt)
         outer_loop_iter = 0
+        breakpoint()
         while True:
-            ref_coords_register = ref_coords_fn.dat.data_ro.copy() # copy of reference coords for book-keeping throughout loops
+            ref_coords_register = ref_coords_fn.dat.data_ro.copy() # copy the current reference coords for book-keeping throughout loops
 
             active = dt_left > 0
             if not np.any(active):
                 break
-            
+
             outer_loop_iter += 1
             active_indices = np.where(active)[0]
 
             # -- Phase 0 --
             # For all currently active particles, compute updated positions and detect crossings
-            # TODO: Check that the assignment of dt_left to dt_trial_fn is correct (agrees on data ordering?)
             dt_trial_fn = Function(FS_vom)
             dt_trial_fn.dat.data[active_indices] = dt_left[active_indices]
+            invJ_vom.interpolate(invJ_expr) # (re)compute invJ on the CURRENT embedding
             trial_ref_pos_fn = update_ref_pos(ref_coords_fn, invJ_vom, v_fn, dt_trial_fn)
 
             # Compute barycentric coordinates
@@ -152,7 +152,6 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
             else:
                 print("\nPassed barycentric test: all particles are now within their parent cells after the phase 1 update.")
             
-            breakpoint()
             # 2) Move particles to neighbouring cells using the crossed_edges info
             # - Find neighbouring cells
             next_parent_cells = np.full(N, -1, dtype=int)
@@ -174,11 +173,13 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
                     # keep next_parent_cells[i] as -1 to indicate boundary hit
                 else:
                     next_parent_cells[i] = next_cell
-            breakpoint()
+
             # - modify parent cell ownership in VOM
-            # -> How much of the particle VOM needs to be modified?
-            # update the reference coordinates Function (otherwise the next assemble/interpolate update will give wrong results)
-            # - recompute inverse Jacobian using new parent cell ownerhsip
+            # - update the reference coordinates Function (otherwise the next assemble/interpolate update will give wrong results)
+            pmesh_updater.update_ref_view(next_parent_cells, ref_coords_register)
+
+            # - recompute inverse Jacobian using new parent cell ownerhsip (done at start of outer loop)
+
             # 4) Re-enter the outer loop with new ref. coords., parent cells and remaining dt_left
     
         # -- Compute new physical coordinates and update VOM
