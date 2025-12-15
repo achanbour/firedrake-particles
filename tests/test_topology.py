@@ -1,3 +1,4 @@
+import numpy as np
 from firedrake import UnitSquareMesh, PeriodicUnitSquareMesh
 from particle_tracking.topology import find_next_cell
 
@@ -98,11 +99,43 @@ def test_find_next_cell_matches_interior_facets():
         # c1 -> c0
         assert find_next_cell(mesh, c1, lf1) == c0
 
-def test_find_next_cell_periodic_mesh():
-    """Test that `find_next_cell` works correctly on a periodic mesh."""
-    mesh = PeriodicUnitSquareMesh(3, 3, direction='both')
-    facet_info = mesh.cell_to_facets.data_ro
+def _cell_centroids(mesh):
+    coords = mesh.coordinates.dat.data_ro
+    cell_nodes = mesh.coordinates.function_space().cell_node_list # maps each mesh cell to function space nodes
+    cell_centroids = np.zeros((mesh.num_cells(), mesh.geometric_dimension))
+    for c in range(mesh.num_cells()):
+        cell_centroids[c] = coords[cell_nodes[c]].mean(axis=0)
+    return cell_centroids
 
-    assert (facet_info[..., 0] == 1).all(), \
-    "Expected all facets to be interior, but found boundary facets"
+def test_find_next_cell_periodic_mesh_geometry_wrap():
+    """Test that `find_next_cell` correctly identifies neighbouring cells
+    in a periodic mesh, including across periodic boundaries."""
+    mesh = PeriodicUnitSquareMesh(3, 3)
+    cell_centroids = _cell_centroids(mesh)
+
+    def neighbours(c):
+        return [find_next_cell(mesh, c, lf) for lf in range(3)]
+    
+    for c in range(mesh.num_cells()):
+        xc, yc = cell_centroids[c]
+        nbs = neighbours(c)
+        assert all(nb is not None for nb in nbs)
+        
+        nbs_centroids = [cell_centroids[nb] for nb in nbs]
+
+        # If close to left edge, expect a neighbour on the right edge
+        if xc < 0.1:
+            assert any(xn > 0.9 for xn, yn in nbs_centroids)
+        
+        # If close to right edge, expect a neighbour on the left edge
+        if xc > 0.9:
+            assert any(xn < 0.1 for xn, yn in nbs_centroids)
+
+        # If close to bottom edge, expect a neighbour on the top edge
+        if yc < 0.1:
+            assert any(yn > 0.9 for xn, yn in nbs_centroids)
+         
+        # If close to top edge, expect a neighbour on the bottom edge
+        if yc > 0.9:
+            assert any(yn < 0.1 for xn, yn in nbs_centroids)
 
