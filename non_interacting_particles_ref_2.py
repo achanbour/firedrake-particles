@@ -43,6 +43,12 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
         # Get the current parent cell ownership
         parent_cells = pmesh.topology.cell_parent_cell_list # ID of containing cell for each point in VOM order
 
+        # Compute domain-safe time step dt
+        # new_dt = compute_domain_safe_dt(pmesh.coordinates.dat.data_ro, v_fn, dt)
+        # if new_dt != dt:
+        #     print(f"Adjusted time step from original dt:{dt} to new dt:{new_dt} to ensure particles remain in domain.")
+        #     dt = new_dt 
+
         # Per-particle tracking loop variables
         dt_left = np.full(N, dt) # remaining time for the current time step
 
@@ -79,6 +85,7 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
                 bary_old, bary_new, dt_left[active_indices], ref_cell_edges
             )
 
+            # Indices of particles that passed and failed
             passed_global = active_indices[passed_local]
             failed_global = active_indices[~passed_local]
         
@@ -95,9 +102,6 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
                 - update parent cell to neighbor across crossed facet
                 - re-enter outer loop as active with updated ref. pos., parent cell and dt_left
             """
-            # -- Process passed particles --
-            dt_left[passed_global] = 0
-            ref_coords_register[passed_global] = trial_ref_pos_fn.dat.data_ro[passed_global]
 
             print("\n=== POST PHASE 0 ===")
             print("Outer loop iteration:", outer_loop_iter)
@@ -105,52 +109,43 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
             print(f"  Failed set: {failed_global}")
             print(f"  Passed set: {passed_global}")
 
+            # -- Process passed particles --
             if len(passed_global) > 0:
+                dt_left[passed_global] = 0
+                ref_coords_register[passed_global] = trial_ref_pos_fn.dat.data_ro[passed_global]
+
                 print("\nPassed set info:")
                 print(f"  dt_left: {dt_left[passed_global]}")
                 print(f"  new ref_coords: {ref_coords_register[passed_global]}")
 
-            print("\nFailed set info:")
-            print(f"  dt_left: {dt_left[failed_global]}")
-
-            # -- Process failed particles -> Phase 1 -- 
-            # Process active-failed particles though a nested loop that moves them to the correct crossing facet
-            # turning them into active-passed particles.
-            t_cross_failed = t_cross[~passed_local]
-            crossed_edges_failed = crossed_edges[~passed_local]
+            # -- Process failed particles -- 
+            # Provided that `detect_crossings` correctly identifies the first crossing event,
+            # we can now directly move failed particles to their crossing facets.
             if len(failed_global) > 0:
-                print("\nGoing into phase 1 to move failed particles to crossing facet...")
-                t_cross_final, crossed_edges_final, ref_coords_final = \
-                    move_failed_particles_to_facet(
-                    failed_global, t_cross_failed, crossed_edges_failed,
-                    ref_coords_fn, invJ_vom, v_fn, # ref_coords_fn stores the ref coords of the current VOM
-                    FS_vom, ref_cell, ref_cell_edges
+                dt_left[failed_global] -= t_cross[failed_global]
+                # Get particle positions at crossing facet
+                new_ref_coords_failed = move_failed_particles_to_facet(
+                    failed_global, t_cross[failed_global], ref_coords_fn, invJ_vom, v_fn, FS_vom
                 )
-                # Update global variables for the failed particles
-                # the return variables are only non-zero for the failed particles so passed particles are unaffected.
-                dt_left -= t_cross_final
-                crossed_edges = crossed_edges_final
-                ref_coords_register = ref_coords_final
+                ref_coords_register[failed_global] = new_ref_coords_failed
 
-                print("\n=== POST PHASE 1 ===")
-                print("Updated failed set info:")
+                print("Failed set info:")
                 print(f"  dt_left: {dt_left[failed_global]}")
                 print(f"  new ref_coords: {ref_coords_register[failed_global]}")
 
             else:
                 print("Skipping phase 1 as there are no failed particles.")
 
-            # At this point all the particles are now active-passed particles
-            # TODO
-            # 1) After updating all ref coords, run barycentric test again to ensure all particles are within their cells
+            # At this point all the particles are now marked as passed.
+            # 1) Run barycentric test again to ensure all particles are located within their original parent cells at their new positions.
             bary_register = ref_cell.compute_barycentric_coordinates(np.array(ref_coords_register))
             tol = 1e-12
             for i, coords_i in enumerate(bary_register):
                 if np.any(coords_i < -tol):
-                    print(f"Error: Particle {i} is still outside its parent cell after the phase 1 update.")
+                    print(f"Error: Particle {i} is outside its original parent cell at its new location.")
                     break
             else:
-                print("\nPassed barycentric test: all particles are now within their parent cells after the phase 1 update.")
+                print("\nPassed barycentric test: all particles are within their original parent cells at their new locations.")
             
             # 2) Move particles to neighbouring cells using the crossed_edges info
             # - Find neighbouring cells
@@ -213,117 +208,82 @@ def update_ref_pos(ref_pos_fn, invJ_vom, v_fn, dt_fn):
     return new_ref_pos_fn
 
 def detect_crossings(bary_old, bary_new, dt_left, edges, tol=1e-12):
-    """Detect which particles have crossed cell boundaries based on barycentric coordinates.
+    """Detect first crossings based on barycentric coordinates."""
 
-    Returns:
-    - passed: boolean array indicating which particles passed (i.e., remained inside their cells at their new positions)
-    - t_cross: array of crossing times for each particle that failed
-    - crossed_edges: list of local IDs of crossed edges for each particle that failed
-    """
     n_particles, n_verts = bary_new.shape
     passed = np.ones(n_particles, dtype=bool)
     t_cross = np.full(n_particles, np.inf)
-    crossed_edges = [None] * n_particles
+    crossed_edges = np.full(n_particles, None, dtype=object)
 
-    for i, coords_i in enumerate(bary_new):
-        # Find all negative barycentric coords in the new position
-        negative_verts = np.where(coords_i < -tol)[0]
-        if len(negative_verts) == 0:
-            # Particle stayed inside its cell
-            continue    
+    for i in range(n_particles):
+        dt = dt_left[i]
+        candidates = []
 
-        # Mark the particle as having crossed the cell boundary
-        passed[i] = False
+        for j in range(n_verts):
+            lambda_old = bary_old[i, j]
+            lambda_new = bary_new[i, j]
 
-        if len(negative_verts) == 1:
-            # Single deterministic crossing
-            neg_vert = negative_verts[0]
-        else:
-            # Ambiguous crossing
-            # Choose the edge with the most negative barycentric coord
-            neg_vert = negative_verts[np.argmin(coords_i[negative_verts])]
+            # For a crossing to occur, a particle must start strictly inside and end strictly outside
+            # if we allow lambda_tol == 0 then particles starting on a facet are misdetected as crossing
+            if lambda_old > tol and lambda_new < -tol:
+                if lambda_old - lambda_new <= tol:
+                    continue
+                t_j = dt * lambda_old / (lambda_old - lambda_new)
+
+                if tol < t_j <= dt + tol:
+                    candidates.append((t_j, j))
         
-        # Find the local edge ID opposite the negative vertex
+        if not candidates:
+            continue # no crossing for this particle
+            
+        # Detect first crossing event
+        passed[i] = False
+        t_hit, neg_vert = min(candidates, key=lambda x: x[0])
+        t_cross[i] = t_hit
+
+        # Find edge opposite the vertex neg_vert
         for edge_id, edge_verts in edges.items():
             if neg_vert not in edge_verts:
                 crossed_edges[i] = edge_id
-                # Compute the intersection time
-                old_lamda = bary_old[i, neg_vert]
-                new_lambda = coords_i[neg_vert]
-                t_cross[i] = -old_lamda / (new_lambda - old_lamda) * dt_left[i]
+                break
 
-    crossed_edges = np.array(crossed_edges, dtype=object) # convert to numpy array for easier indexing
     return passed, t_cross, crossed_edges
 
-def move_failed_particles_to_facet(
-        failed_global, t_cross0, crossed_edges0, ref_coords_fn, invJ_vom, v_fn, FS_vom, ref_cell, ref_cell_edges, tol=1e-12):
-    """Phase 1: Move failed particles to their first crossing facet.
-    
-    This resolves the case where the phase 0 check produces two negative barycentric
-    coordinates indicating that the full step has overshot a vertex. We therefore backtrack
-    iteratively with reduced dt until exactly one barycentric coordinate becomes 0.
+def move_failed_particles_to_facet( failed_global, t_cross, ref_coords_fn, invJ_vom,v_fn, FS_vom):
+    """Move failed particles exactly to their first crossing facet."""
+
+    dt_step_fn = Function(FS_vom)
+    dt_step_fn.dat.data[:] = 0.0
+    dt_step_fn.dat.data[failed_global] = t_cross # set dt to t_cross for failed particles only
+
+    # One single update
+    ref_step_fn = update_ref_pos(ref_coords_fn, invJ_vom, v_fn, dt_step_fn)
+
+    # Extract results for failed particles only
+    ref_coords_final = ref_step_fn.dat.data_ro[failed_global].copy()
+
+    return ref_coords_final
+
+
+def compute_domain_safe_dt(coords, v_fn, dt, *, xmin=0.0, xmax=1.0, 
+                           ymin=0.0, ymax=1.0, eps=1e-14):
+    """Compute a domain-safe time step to ensure particles remain in the domain.
+    NOTE: This has the drawback of being over restrictive since one bad particle can lead to a very small dt
+    and the same dt is applied to all particles.
     """
-    n_failed = len(failed_global)
-    if n_failed == 0:
-        return
+    x = coords[:, 0]
+    y = coords[:, 1]
+    v = v_fn.dat.data_ro
 
-    # Declare variables that will be updated in the inner loop
-    dt_curr = t_cross0
-    still_failed = np.asarray(failed_global, dtype=int)
-    edge_ids_curr = np.asarray(crossed_edges0, dtype=object).copy() # This tracks which edge each still_failed particle is associated with
-
-    # Declare end results arrays
-    N = FS_vom.mesh().num_vertices()
-    t_cross_final = np.zeros(N)
-    crossed_edges_final = np.full(N, None, dtype=object)
-    ref_coords_final = np.zeros((N, FS_vom.mesh().geometric_dimension))
-
-    # Loop until every failed particle finds a unique crossing facet
-    inner_loop_iter = 0
-    while len(still_failed) > 0:
-        inner_loop_iter += 1
-        # NOTE: the below steps replicate what's being done in the outer loop, but only for the currently failed particles set
-        # TODO: Check that the assignment of dt_curr to dt_step_fn is correct (agrees on data ordering?)
-        dt_step_fn = Function(FS_vom)
-        dt_step_fn.dat.data[still_failed] = dt_curr
-
-        ref_step_fn = update_ref_pos(ref_coords_fn, invJ_vom, v_fn, dt_step_fn)
-
-        bary_old = ref_cell.compute_barycentric_coordinates(
-            np.array(ref_coords_fn.dat.data_ro)[still_failed]
-        )
-        bary_new = ref_cell.compute_barycentric_coordinates(
-            np.array(ref_step_fn.dat.data_ro)[still_failed]
-        )
-        passed_mask, t_cross, crossed_edges = detect_crossings(
-            bary_old, bary_new, dt_curr, ref_cell_edges
-        )
-
-        passed_idx = still_failed[passed_mask]
-        failed_idx = still_failed[~passed_mask]
-
-        # Record values for newly passed particles
-        t_cross_final[passed_idx] = dt_curr[passed_mask]
-        crossed_edges_final[passed_idx] = edge_ids_curr[passed_mask]
-        ref_coords_final[passed_idx] = ref_step_fn.dat.data_ro[passed_idx]
-
-        # Update state for next iteration
-        still_failed = failed_idx
-        dt_curr = t_cross[~passed_mask]
-        edge_ids_curr = crossed_edges[~passed_mask]
-    
-    # Finally, update global variables for the failed particles (all others are zeroed-out by default).
-    # dt_left is equal to the original dt_left minus t_cross_inner that made the particle succeed.
-    # dt_left -= t_cross_final
-    # crossed_edges[:] = crossed_edges_final  
-    # ref_coords[:] = ref_coords_final
-    
-    return t_cross_final, crossed_edges_final, ref_coords_final
-
+    d = np.minimum.reduce([x - xmin, xmax - x, y - ymin, ymax - y]) # smallest distance to domain boundary
+    v_inf = np.maximum(np.abs(v[:, 0]), np.abs(v[:, 1])) # infinity norm of velocity
+    dt_i = d / (v_inf + eps)
+    return min(dt, np.min(dt_i))
 
 if __name__=='__main__':
     # Define the parent mesh
     mesh = UnitSquareMesh(10, 10)
+    # mesh = PeriodicUnitSquareMesh(10, 10)
 
     # Define the particles in a VOM
     N = 10
