@@ -65,6 +65,8 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
             # -- Phase 0: Process active particles --
             # For all currently active particles, compute updated positions and detect crossings
             dt_trial_fn = Function(FS_vom)
+
+            # NOTE: this line enforces that dt_left indexes into the VOM ordering i.e., dt_left[i] is VOM particle i
             dt_trial_fn.dat.data[active_indices] = dt_left[active_indices]
             invJ_vom.interpolate(invJ_expr) # (re)compute invJ on the CURRENT embedding
             trial_ref_pos_fn = update_ref_pos(ref_coords_fn, invJ_vom, v_fn, dt_trial_fn)
