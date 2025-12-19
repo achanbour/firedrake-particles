@@ -23,9 +23,9 @@ class VertexOnlyMeshUpdater:
         self.parent_mesh = parent_mesh # parent mesh
 
     def update(self, new_coords_fn, tolerance=None, redundant=True, exclude_halos=False):
-        # new_coords = np.asarray(new_coords, float)
-
         """
+        Perform a full VOM update by mutating the appropriate fields.
+
        `new_coords_fn` is a Firedrake function storing the updated coordinates in VOM ordering
         we need to feed these coordinates in input ordering to `_parent_mesh_embedding`.
    
@@ -56,7 +56,8 @@ class VertexOnlyMeshUpdater:
         self._update_coordinates(embedding)
     
     def update_ref_view(self, next_parent_cells, new_refcoords):
-        """A reference-only update method:
+        """Perform a reference-only VOM update.
+
         Updates the parent cell ownership and reference coordinates only assuming that the new pair 
         (parent cell, ref coords) is geometrically correct.
         """
@@ -295,4 +296,139 @@ class VertexOnlyMeshUpdater:
         self.vom._bounding_box_coords = None
         self.vom._saved_coordinate_dat_version = self.vom.coordinates.dat.dat_version
 
+    def rebuild_topology(self, absorbed_vom_indices, tolerance=None, redundant=True, exclude_halos=False):
+        """
+        Rebuild the VOM topology after removing some particles.
+
+        1) Embedd the coordinates of the current VOM and force absorbed points to be 'missing'.
+        TODO: Extend to allow new coordinates to be passed in.
+
+        2) Rebuild a new DMSwarm with only visible points.
+
+        3) Define the current VOM as the input ordering VOM for the new VOM.
+
+        4) Construct an SF between the current (old) VOM and the new VOM orderings.
+        """
+        from firedrake.petsc import PETSc
+        from firedrake.mesh import (
+            _parent_mesh_embedding,
+            _dmswarm_create,
+            _swarm_original_ordering_preserve,
+            VertexOnlyMeshTopology
+        )
+        comm = self.parent_mesh.comm
+        if comm.size != 1:
+            raise NotImplementedError("Rebuilding the VOM topology is currently only supported for serial runs.")
+        
+        if not redundant:
+            raise NotImplementedError("Rebuilding the VOM topology uses globalindex as persistent point IDs, so `redundant=True` is required.")
+        
+        absorbed_vom_indices = np.asarray(absorbed_vom_indices, dtype=int) # assumed to index into current VOM ordering
+        current_vom_coords = self.vom.coordinates.dat.data_ro
+
+        # --Embedd the current VOM coordinates--
+        tolerance = tolerance or self.parent_mesh.tolerance
+        (
+            coords_local,
+            global_idxs_local,
+            reference_coords_local,
+            parent_cell_nums_local,
+            owned_ranks_local,
+            input_ranks_local,
+            input_coords_idxs_local,
+            missing_global_idxs_local
+        ) = _parent_mesh_embedding(
+            self.parent_mesh,
+            current_vom_coords,
+            tolerance,
+            redundant,
+            exclude_halos,
+            remove_missing_points=False
+        )
+
+        # Force absorbed points to be 'missing'
+        # Assuming serial + redudant, input_coords_idxs_local is the baseline index 0,...,N_old-1
+        if absorbed_vom_indices.size:
+            is_absorbed = np.isin(input_coords_idxs_local, absorbed_vom_indices)
+            parent_cell_nums_local[is_absorbed] = -1  # mark as missing
+            reference_coords_local[is_absorbed, :] = np.nan 
+            owned_ranks_local[is_absorbed] = comm.size + 1  # set an invalid rank
+
+        visible = parent_cell_nums_local != -1
+
+        if self.parent_mesh.extruded:
+            raise NotImplementedError("Rebuilding the VOM topology currently only supports non-extruded parent meshes.")
+        
+        # --Rebuild a new DMSwarm with only visible points--
+        plex_parent_cell_nums_local = np.full_like(parent_cell_nums_local, -1)
+        # For visible points, map parent cell nums to plex numbering using `cell_closure` (maps Firedrake's cell number to the corresponding PETSc plex cell number)
+        plex_parent_cell_nums_local[visible] = self.parent_mesh.topology.cell_closure[parent_cell_nums_local[visible], -1]
+
+        # NOTE:
+        # - `coords_idxs` is written into the DMSwarm field `globalindex` as a unique ID per point in the Swarm.
+        # In Firedrake this is set to the index each point in the input coordinates array when `redundant=True`, otherwise it is set to a rank-dependent global numbering.
+        #
+        # - `input_coords_idxs` is written into the DMSwarm field `inputindex`.
+        # In Firedrake this is set to the index of each point in the input coordinates array on the rank that supplied it (paired with `inputrank`).
+        # The pair (inputindex, inputrank) is then used to build the input-ordering SF (map the "input-order point j"->"swarm point i").
+        # 
+        # Under the assumption of a unique rank, both fields are identical. 
+        # Since the input coordinates array contains points in the current VOM ordering,
+        # these fields are set to the indices of (visible) points in the current VOM ordering.
+        new_swarm = _dmswarm_create(
+            fields=None,
+            comm=comm,
+            plex=self.parent_mesh.topology.topology_dm,
+            coords=coords_local[visible],
+            plex_parent_cell_nums=plex_parent_cell_nums_local[visible],
+            coords_idxs=input_coords_idxs_local[visible], 
+            reference_coords=reference_coords_local[visible],
+            ranks=owned_ranks_local[visible],
+            input_ranks=input_ranks_local[visible],
+            input_coords_idxs=input_coords_idxs_local[visible],
+            base_parent_cell_nums=None,
+            extrusion_heights=None,
+            extruded=False,
+            tdim=self.parent_mesh.topological_dimension,
+            gdim=self.parent_mesh.geometric_dimension,
+        )
+        
+        # --Build the input ordering VOM for the new VOM--
+        new_input_ordering_swarm = _swarm_original_ordering_preserve(
+            comm,
+            new_swarm,
+            current_vom_coords,
+            plex_parent_cell_nums_local,
+            global_idxs_local,
+            reference_coords_local,
+            parent_cell_nums_local,
+            owned_ranks_local,
+            input_ranks_local,
+            input_coords_idxs_local,
+            extruded=False,
+            layers=getattr(self.parent_mesh, "layers", None),
+        )
+
+        # Ensure no halos on the input ordering swarm
+        # It must provide a pure index set so that each swarm point can be consistently identified using either: 
+        # `globalindex` as implemented here
+        # `(inputindex, inputrank)` as implemented in the original VOM construction
+        sf = new_input_ordering_swarm.getPointSF()
+        nroots = new_input_ordering_swarm.getLocalSize()
+        sf.setGraph(nroots, None, []) # no leaves -> no off-process/halo references
+        new_input_ordering_swarm.setPointSF(sf)
+
+        # --Construct the new VOM topology around the new DMSwarm--
+        new_topology = VertexOnlyMeshTopology(
+            new_swarm,
+            self.parent_mesh.topology,
+            name=new_swarm.getName() if new_swarm.getName() else "vom_topology_rebuild",
+            reorder=None,
+            input_ordering_swarm=new_input_ordering_swarm,
+        )
+
+        # --Construct SF between old VOM and new VOM orderings--
+        # TODO  
+
+        return new_topology
 
