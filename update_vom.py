@@ -250,7 +250,6 @@ class VertexOnlyMeshUpdater:
             if name in self.vom.__dict__:
                 del self.vom.__dict__[name]
 
-
     def _update_coordinates(self, embedding):
         coords_embedded = embedding["coords"]
         refcoords_embedded = embedding["refcoords"]
