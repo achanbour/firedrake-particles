@@ -1,7 +1,10 @@
 from firedrake import *
 import numpy as np
-
 from update_vom import UpdateVertexOnlyMesh
+
+"""
+Update a VertexOnlyMesh by changing particle positions in physical space.
+"""
 
 np.random.seed(42)
 
