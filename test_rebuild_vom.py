@@ -2,6 +2,10 @@ from firedrake import *
 import numpy as np
 from update_vom import VertexOnlyMeshUpdater
 
+"""
+Rebuild a VertexOnlyMesh following a topology change (e.g., removing some particles).
+"""
+
 mesh = UnitSquareMesh(10, 10)
 
 N = 10
