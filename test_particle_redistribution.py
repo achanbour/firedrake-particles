@@ -1,5 +1,6 @@
 from firedrake import *
 import numpy as np
+from update_vom import VertexOnlyMeshUpdater
 
 mesh = UnitSquareMesh(10, 10)
 
@@ -10,6 +11,7 @@ io_vom = vom.input_ordering
 
 print("Initial particle positions (in input order): ", particle_coords)
 print("Initial particle positions (in primary VOM order): ", vom.coordinates.dat.data_ro)
+print("Initial particle reference positions: ", vom.reference_coordinates.dat.data_ro)
 
 FS_vom = VectorFunctionSpace(vom, "DG", 0, dim=2)
 FS_io_vom = VectorFunctionSpace(io_vom, "DG", 0, dim=2)
@@ -36,5 +38,12 @@ print("Function values at particles (in VOM order): ", fn.dat.data_ro)
 # This causes the VOM topology to change so we need to reconstruct the DMswarm instead of mutating its fields.
 particles_to_remove = [2, 5, 7] # assume indices in VOM ordering
 
+vom_updater = VertexOnlyMeshUpdater(vom, mesh)
+vom_updater.rebuild_vom(particles_to_remove)
 
-
+# NOTE: Changing the VOM topology invalidates the Function Spaces and Functions.
+# The first step is to check that the VOM has been properly updated.
+print("Updated particle positions: ", vom.coordinates.dat.data_ro)
+print("Updated particle reference positions: ", vom.reference_coordinates.dat.data_ro)
+    
+# print("Function values at particles after VOM update: ", fn.data.data_ro)

@@ -229,9 +229,9 @@ class VertexOnlyMeshUpdater:
         # Delete cached attributes so they are lazily recomputed on next access using the updated swarm fields
         topology = self.vom.topology
         for name in (
-            "exterior_facets"
+            "exterior_facets",
             "interior_facets",
-            "cell_to_facets"
+            "cell_to_facets",
             "cell_closure",
             "cell_set",
             "cell_parent_cell_list",
@@ -296,7 +296,7 @@ class VertexOnlyMeshUpdater:
         self.vom._bounding_box_coords = None
         self.vom._saved_coordinate_dat_version = self.vom.coordinates.dat.dat_version
 
-    def rebuild_topology(self, absorbed_vom_indices, tolerance=None, redundant=True, exclude_halos=False):
+    def _rebuild_topology(self, absorbed_vom_indices, tolerance=None, redundant=True, exclude_halos=False):
         """
         Rebuild the VOM topology after removing some particles.
 
@@ -309,7 +309,6 @@ class VertexOnlyMeshUpdater:
 
         4) Construct an SF between the current (old) VOM and the new VOM orderings.
         """
-        from firedrake.petsc import PETSc
         from firedrake.mesh import (
             _parent_mesh_embedding,
             _dmswarm_create,
@@ -347,7 +346,7 @@ class VertexOnlyMeshUpdater:
         )
 
         # Force absorbed points to be 'missing'
-        # Assuming serial + redudant, input_coords_idxs_local is the baseline index 0,...,N_old-1
+        # Assuming serial + redudant so input_coords_idxs_local is the baseline index of points 0,...,N_old-1
         if absorbed_vom_indices.size:
             is_absorbed = np.isin(input_coords_idxs_local, absorbed_vom_indices)
             parent_cell_nums_local[is_absorbed] = -1  # mark as missing
@@ -383,6 +382,7 @@ class VertexOnlyMeshUpdater:
             plex_parent_cell_nums=plex_parent_cell_nums_local[visible],
             coords_idxs=input_coords_idxs_local[visible], 
             reference_coords=reference_coords_local[visible],
+            parent_cell_nums=parent_cell_nums_local[visible],
             ranks=owned_ranks_local[visible],
             input_ranks=input_ranks_local[visible],
             input_coords_idxs=input_coords_idxs_local[visible],
@@ -431,4 +431,101 @@ class VertexOnlyMeshUpdater:
         # TODO  
 
         return new_topology
+
+    def rebuild_vom(self, absorbed_vom_indices,):
+        """Rebuild the VOM around a new topology.
+        
+        1) Recreate the underlying MeshGeometry object.
+
+        2) Swap all attributes of the existing VOM and clear cached properties.
+
+        3) Increment VOM version number to indicate that the VOM has changed.
+        """
+        import firedrake.cython.dmcommon as dmcommon
+        import firedrake.functionspace as functionspace
+        import firedrake.functionspaceimpl as functionspaceimpl
+        import firedrake.function as function
+        from firedrake.mesh import (
+            make_vom_from_vom_topology,
+            _generate_default_mesh_reference_coordinates_name,
+        )
+        import weakref
+
+        new_vom_topology = self._rebuild_topology(absorbed_vom_indices)
+
+        # --Build a new MeshGeometry object around the new topology--
+        tolerance = getattr(self.vom, "_tolerance", self.parent_mesh.tolerance)
+        new_mesh_geometry = make_vom_from_vom_topology(new_vom_topology, self.vom.name, tolerance)
+
+        # NOTE: 
+        # `_parent_mesh` is a property of the MeshGeometry class defined with a setter method, so we can set it explicitly.
+        # MeshGeometry inherits from ufl.Mesh. 
+        # UFL objects are designed to be immutable symbolic objects with a stable identity (used for compilation, subexpression elimination etc.)
+        # Hence, the mutable properties of a MeshGeometry object are stored in a ufl_cargo() which is intended to store non-symbolic states without breaking UFL's expectations about the mesh object.
+        new_mesh_geometry._parent_mesh = self.parent_mesh
+
+        # --Transfer the new topology into the existing mesh object--
+        self.vom._topology = new_vom_topology
+        self.vom._parent_mesh = self.parent_mesh
+        self.vom._tolerance = tolerance
+
+        # --Transfer the new coordinates into the VOM--
+        # NOTE: the mesh coordinate field defines the geometry of the mesh. Therefore, it is defined as a CoordinatelessFunction (as opposed to a Function WithGeometry)
+        # which means that its function space is built entirely from the mesh topology and the element type, and is not bound to a geometry object.
+        # a `CoordinatelessFunction(V, ..)` lives on a function space `V` whose DM/Section specifies how many DoFs there are and how they're arranged. It does not carry a reference to a mesh (`MeshGeometry` object).
+        # So `_coordinates` is just a vector of numbers laid out in the function space DoF layout. It can exist independently of the mesh.
+        # When we access the mesh `coordinates` field, Firedrake wraps that coordinateless fucnction in a `WithGeometry` function which binds it to the mesh geometry. This allows UFL to treat it as a spatial coordinate field.
+        
+        # NOTE: `_coordinates` is a read-only property of MeshGeometry.
+        # self.vom._coordinates = new_mesh_geometry._coordinates
+        self.vom.ufl_cargo().coordinates = new_mesh_geometry.ufl_cargo().coordinates
+
+        # NOTE: Since the coordinateless Function caches a weakref to its mesh geometry, we need to update that and clear the cached wrapper.
+        self.vom.ufl_cargo().coordinates._as_mesh_geometry = weakref.ref(self.vom)
+
+        if hasattr(self.vom.ufl_cargo(), "_coordinates_function"):
+            del self.vom.ufl_cargo()._coordinates_function
+
+        # Remove cached `coordinates` so they are rebuilt from the new topology.
+        if "coordinates" in self.vom.__dict__:
+            del self.vom.__dict__["coordinates"]
+
+        # --Recreate reference codrinates as a WithGeometry Function--
+
+        # Clear cached reference coordinates Function if it exists
+        if "reference_coordinates" in self.vom.__dict__:
+            del self.vom.__dict__["reference_coordinates"]
+        if "_reference_coordinates" in self.vom.__dict__:
+            del self.vom.__dict__["_reference_coordinates"]
+
+        parent_tdim = self.parent_mesh.topological_dimension
+        ref_coords_fs = functionspace.VectorFunctionSpace(new_vom_topology, "DG", 0, dim=parent_tdim,)
+        ref_coords_data = dmcommon.reordered_coords(
+            new_vom_topology.topology_dm,
+            ref_coords_fs.dm.getDefaultSection(),
+            (new_vom_topology.num_vertices(), parent_tdim),
+            reference_coord=True,
+        )
+        ref_coords_top = function.CoordinatelessFunction(
+            ref_coords_fs,
+            val=ref_coords_data,
+            name=_generate_default_mesh_reference_coordinates_name(self.vom.name),
+        )
+
+        refV = functionspaceimpl.WithGeometry.create(ref_coords_fs, self.vom)
+        self.vom.reference_coordinates = function.Function(refV,val=ref_coords_top)
+
+        # --Clear cached topology-derived attributes on both the topology object and the mesh object--
+        self._invalidate_topology_properties()
+        
+        # --Reset geometry caches so they are rebuilt from the new coordinate field--
+        self.vom._spatial_index = None
+        self.vom._bounding_box_coords = None
+        self.vom._saved_coordinate_dat_version = self.vom.coordinates.dat.dat_version
+
+        # --Increment VOM version number--
+        # NOTE: mesh version number does not currently exist in Firedrake/
+        self.vom._vom_version = getattr(self.vom, "_vom_version", 0) + 1
+
+        return self.vom
 
