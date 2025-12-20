@@ -65,7 +65,6 @@ print(sf_old_to_new.view())
 
 # print("Function values at particles after VOM update: ", fn.data.data_ro)
 
-
 # TODO 1: Currently, the Functions are still tied to the old VOM so they return values using the old number of particles.
 # We therefore need to:
 # 1. redefine Functions or 
