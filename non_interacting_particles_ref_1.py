@@ -2,7 +2,7 @@ from firedrake import *
 import numpy as np
 from update_vom import VertexOnlyMeshUpdater
 from non_interacting_particles_phys import move_particles_in_phys_space
-from particle_tracking.topology import find_next_cell
+from particle_tracking.cell_crossing_utils import find_next_cell
 from ufl.differentiation import ReferenceGrad
 
 np.random.seed(42)

@@ -16,10 +16,10 @@ def move_particles_in_phys_space(pmesh, mesh, v, dt, T, t=0.0):
     x(t+dt) = x(t) + dt*v
 
     Args:
-        pmesh: A Firedrake VertexOnlyMesh containing the particles.
-        mesh: The parent Firedrake mesh.
+        pmesh: A VertexOnlyMesh containing the particles.
+        mesh: The parent mesh.
         v: A DG(0) vector field on `pmesh` storing particle velocities.
-        dt: Initial time step size.
+        dt: Time step size.
         T: Final time up to which particles are integrated.
         t: Initial time.
 
@@ -115,21 +115,22 @@ if __name__=='__main__':
     # Save initial velocities in VOM order for exact solution
     v0_vom = v_vom.dat.data_ro.copy()
 
-    # Set the parameters below to do a single integration step
+    # Set the parameters to do a single integration step
     T = 0.3
     dt = T 
 
     T_final = move_particles_in_phys_space(particle_vom, mesh, v_vom, dt, T, t=0.0)
     print("Final particle positions (in updated VOM order): ", particle_vom.coordinates.dat.data)
 
-    # --- Check correctness of results
+    # --- Check correctness of results ---
     # 1. Confirm that the parent mesh embedding has been updated.
     # i.e., that the coords obtained by interpolating the parent mesh into the updated VOM match the coords of the updated VOM
     embedding_func = assemble(interpolate(x, particle_vom.coordinates.function_space()))
     # print("Parent mesh embedding: ", embedding_func.dat.data)
     print("Parent mesh embedding diff: ", embedding_func.dat.data - particle_vom.coordinates.dat.data)
+
     # 2. Check the integration error
-    # With constant velocities, forward Euler must be exact (up to machine precision)
+    # With constant velocities, forward Euler is exact (up to machine precision)
     exact_final_coords = x0_vom + T_final * v0_vom
     print("Exact final particle positions (in primary VOM order): ", exact_final_coords)
 

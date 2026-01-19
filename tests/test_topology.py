@@ -1,6 +1,6 @@
 import numpy as np
 from firedrake import UnitSquareMesh, PeriodicUnitSquareMesh
-from particle_tracking.topology import find_next_cell
+from particle_tracking.cell_crossing_utils import find_next_cell
 
 """
 The series of unit tests below assume a triangular mesh.
