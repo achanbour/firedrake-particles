@@ -296,12 +296,12 @@ class VertexOnlyMeshUpdater:
         self.vom._bounding_box_coords = None
         self.vom._saved_coordinate_dat_version = self.vom.coordinates.dat.dat_version
 
-    def _rebuild_topology(self, absorbed_vom_indices, tolerance=None, redundant=True, exclude_halos=False):
+    def _rebuild_topology(self, absorbed_vom_indices, new_coords=None, tolerance=None, redundant=True, exclude_halos=False):
         """
         Rebuild the VOM topology after removing some particles (replicating broadly the steps in `_pic_swarm_in_mesh`).
 
-        1) Embedd the coordinates of the current VOM and force absorbed points to be 'missing'.
-        TODO: Extend to allow new coordinates to be passed in.
+        1) Embedd the coordinates of the current VOM and mark absorbed points as 'missing'.
+        Extended to allow the embedding of updated coordinates if provided.
 
         2) Rebuild a new DMSwarm with only visible points.
 
@@ -309,7 +309,6 @@ class VertexOnlyMeshUpdater:
 
         4) Construct an SF between the current (old) VOM and the new VOM orderings.
         """
-        from firedrake.petsc import PETSc
         from firedrake.mesh import (
             _parent_mesh_embedding,
             _dmswarm_create,
@@ -324,7 +323,7 @@ class VertexOnlyMeshUpdater:
             raise NotImplementedError("Rebuilding the VOM topology uses globalindex as persistent point IDs, so `redundant=True` is required.")
         
         absorbed_vom_indices = np.asarray(absorbed_vom_indices, dtype=int) # assumed to index into current VOM ordering
-        current_vom_coords = self.vom.coordinates.dat.data_ro # coordinates in current VOM
+        coords_to_embedd = new_coords if new_coords is not None else self.vom.coordinates.dat.data_ro # coordinates to embedd (in current VOM)
 
         # 1. Embed current VOM coordinates
         tolerance = tolerance or self.parent_mesh.tolerance
@@ -339,7 +338,7 @@ class VertexOnlyMeshUpdater:
             missing_global_idxs_local
         ) = _parent_mesh_embedding(
             self.parent_mesh,
-            current_vom_coords,
+            coords_to_embedd,
             tolerance,
             redundant,
             exclude_halos,
@@ -366,39 +365,23 @@ class VertexOnlyMeshUpdater:
 
         # NOTE:
         # - `coords_idxs` is written into the DMSwarm field `globalindex` as a unique ID for each swarm point.
-        #       In Firedrake this is set to the index of each point in the input coordinates array when `redundant=True`, otherwise it is set to a rank-dependent global numbering.
+        #       This is set to the index of each point in the input coordinates array when `redundant=True`, otherwise it's an index in rank order.
         # - `input_coords_idxs` is written into the DMSwarm field `inputindex`.
-        #       In Firedrake this is set to the index of each point in the input coordinates array on the rank that supplied it (paired with `inputrank`).
-        #       The pair (inputindex, inputrank) is then used to build the input-ordering SF (map the "input-order point j"->"swarm point i").
+        #       This is set to the index of each point in the input coordinates array on the rank that supplied it (paired with `inputrank`).
+        #       The pair (inputindex, inputrank) is then used to build the input-ordering SF (map the "point i"->"input-order point j").
 
-        old_topology = self.vom.topology
-        old_swarm = old_topology.topology_dm
-        old_vom_to_swarm = old_topology.cell_closure[:, -1] # map old VOM index -> old swarm point ID
-        old_gid = old_swarm.getField("globalindex").ravel()
-        pids_in_old_vom_order = old_gid[old_vom_to_swarm] # map old swarm point ID in old VOM ordering
-        old_swarm.restoreField("globalindex")
-
-        # `visible` is a mask in the current (old) VOM ordering (because we embedded `current_vom_coords` and `absorbed_vom_indices` corresponds to points in VOM numbering).
-        # Therefore `pids_in_old_vom_order[visible]` gives the particle IDs (the old swarm's `globalindex`)
-        # for the surviving points in that same ordering.
-        #
-        # We carry these IDs over into the new swarm by writing them into its `globalindex` field.
-        # This makes it possible to match old and new points across rebuilds even if the new VOM is reordered.
-        #
-        # NOTE: this implementation only works in a serial workflow. With MPI redistribution (`redundant=False`)
-        # we would need to use rank-based persistent point IDs (such as `(inputrank, inputindex)`).
         new_swarm = _dmswarm_create(
             fields=None,
             comm=comm,
             plex=self.parent_mesh.topology.topology_dm,
             coords=coords_local[visible],
             plex_parent_cell_nums=plex_parent_cell_nums_local[visible],
-            coords_idxs=pids_in_old_vom_order[visible], # -> globalindex field uses point IDs from old swarm
+            coords_idxs=global_idxs_local[visible],
             reference_coords=reference_coords_local[visible],
             parent_cell_nums=parent_cell_nums_local[visible],
             ranks=owned_ranks_local[visible],
             input_ranks=input_ranks_local[visible],
-            input_coords_idxs=input_coords_idxs_local[visible], # -> inputindex field refers to the embedded input array (current_vom_coords)
+            input_coords_idxs=input_coords_idxs_local[visible],
             base_parent_cell_nums=None,
             extrusion_heights=None,
             extruded=False,
@@ -406,12 +389,11 @@ class VertexOnlyMeshUpdater:
             gdim=self.parent_mesh.geometric_dimension,
         )
         
-        # 3. Create the input ordering swarm for the new DMSwarm
-        # NOTE: the input ordering VOM here is intentionally set to the current (old) VOM.
+        # 3. Create the input ordering swarm for the new DMSwarm (input ordering is given by VOM_0)
         new_input_ordering_swarm = _swarm_original_ordering_preserve(
             comm,
             new_swarm,
-            current_vom_coords, # coordinates in old VOM ordering instead of user input ordering
+            coords_to_embedd, # coordinates in old VOM ordering instead of user input ordering
             plex_parent_cell_nums_local,
             global_idxs_local,
             reference_coords_local,
@@ -423,16 +405,21 @@ class VertexOnlyMeshUpdater:
             layers=getattr(self.parent_mesh, "layers", None),
         )
 
-        # Ensure no halos on the input ordering swarm pointSF.
-        # It must provide a pure index set so that each swarm point can be consistently identified.
-        # Get PETSc pointSF attached to the input ordering DMSwarm
+        # NOTE:
+        # We created a new swarm with only visible points but then passed the full array of points when constructing the IO swarm.
+        # The IO swarm faithfully represents the input state i.e., VOM_0
+        # The IO SF between VOM_0 and VOM_1 will only map visible points
+
+        # Ensure no halos on the IO swarm pointSF.
+        # It must provide a pure index set so that each swarm point can be consistently identified in the input.
+        # Get PETSc pointSF attached to the IO DMSwarm
         # roots = points "owned" on a rank, leaves = halos/ghost copies that reference roots on other ranks
-        sf = new_input_ordering_swarm.getPointSF() # PETSc pointSF attached to the input ordering DMSwarm
+        sf = new_input_ordering_swarm.getPointSF() # PETSc pointSF attached to the IO DMSwarm
         nroots = new_input_ordering_swarm.getLocalSize()
         sf.setGraph(nroots, None, []) # remove all leaves -> no halos
         new_input_ordering_swarm.setPointSF(sf)
 
-        # --Define the new VOM topology around the new DMSwarm--
+        # --Create new VOM topology around the new DMSwarm--
         new_topology = VertexOnlyMeshTopology(
             new_swarm,
             self.parent_mesh.topology,
@@ -441,49 +428,31 @@ class VertexOnlyMeshUpdater:
             input_ordering_swarm=new_input_ordering_swarm,
         )
 
-        # --Build an explicit old VOM->new VOM mapping SF--
+        # --Build an explicit old VOM->new VOM point mapping--
+        # TODO: Use SF instead of explicit mapping
         # using a persistent point ID that does not depend on the VOM ordering
         # `globalindex` works only if `redundant=True` since otherwise the globalindex is rank-dependent.
-        new_vom_to_swarm = new_topology.cell_closure[:, -1] # map new VOM index -> new swarm point ID
+        # new_vom_to_swarm = new_topology.cell_closure[:, -1] # map new VOM index -> new swarm point ID
     
         # Extract persistent point IDs from old and new swarms
-        new_pids = new_swarm.getField("globalindex").ravel()
-        pids_in_new_vom_order = new_pids[new_vom_to_swarm]
-        new_swarm.restoreField("globalindex")
+        # new_pids = new_swarm.getField("globalindex").ravel()
+        # pids_in_new_vom_order = new_pids[new_vom_to_swarm]
+        # new_swarm.restoreField("globalindex")
 
         # Build mapping: point ID (pid) -> new VOM vertex index
-        pid_to_new_vom = {pid: j for j, pid in enumerate(pids_in_new_vom_order)}
+        # pid_to_new_vom = {pid: j for j, pid in enumerate(pids_in_new_vom_order)}
 
         # Build mapping: old VOM vertex index -> new VOM vertex index based on pid
-        N_old = old_topology.num_vertices()
-        old_to_new_point_mapping = np.full(N_old, -1, dtype=np.int32)
-        for i_old, pid in enumerate(pids_in_old_vom_order):
-            if i_old in absorbed_vom_indices:
-                continue
-            old_to_new_point_mapping[i_old] = pid_to_new_vom.get(pid, -1)
+        # N_old = old_topology.num_vertices()
+        # old_to_new_point_mapping = np.full(N_old, -1, dtype=np.int32)
+        # for i_old, pid in enumerate(pids_in_old_vom_order):
+        #     if i_old in absorbed_vom_indices:
+        #         continue
+        #     old_to_new_point_mapping[i_old] = pid_to_new_vom.get(pid, -1)
 
-        # Build the SF graph that old VOM vertices (leaves) -> new VOM vertices (roots)
-        # Leaves live in the old VOM index space [0,...,N_old-1]
-        # Roots live in the new VOM index space [0,...,N_new-1]
-        leaf_idx = np.where(old_to_new_point_mapping != -1)[0].astype(np.int32) # vertex indices in old VOM that still exist
-        iremote = np.zeros((leaf_idx.size, 2), dtype=np.int32)
-        iremote[:, 0] = 0 # single rank
-        iremote[:, 1] = old_to_new_point_mapping[leaf_idx].astype(np.int32) # vertex indices in new VOM
+        return new_topology
 
-        sf_old_to_new = PETSc.SF().create(comm=comm)
-        
-        # breakpoint()
-
-        # print("absorbed:", absorbed_vom_indices)
-        # print("old_to_new:", old_to_new.tolist())
-        # print("leaf_idx:", leaf_idx.tolist())
-        # print("iremote[:,1]:", iremote[:, 1].tolist())
-
-        sf_old_to_new.setGraph(new_topology.num_vertices(), leaf_idx, iremote)
-
-        return new_topology, sf_old_to_new, old_to_new_point_mapping
-
-    def rebuild_vom(self, absorbed_vom_indices,):
+    def rebuild_vom(self, absorbed_vom_indices, new_coords=None):
         """Rebuild the VOM around a new topology.
         
         1) Recreate the underlying MeshGeometry object.
@@ -502,24 +471,22 @@ class VertexOnlyMeshUpdater:
         )
         import weakref
 
-        old_version = getattr(self.vom, "_topology_version", 0)
-        new_vom_topology, sf_old_to_new, old_to_new_point_mapping = self._rebuild_topology(absorbed_vom_indices)
+        new_vom_topology = self._rebuild_topology(absorbed_vom_indices, new_coords)
         
         # Stash one-step lineage
-        # ? Store a history of mappings instead of just last one?
-        # ? Compose SFs?
+        # If using point mappings, we need to store a history of mappings
         """
         Suppose mesh versions evolve as follow:
 	        - version 0 -> rebuild -> version 1 (stash mapping 0->1)
             - version 1 -> rebuild -> version 2 (stash mapping 1-> 2, overwriting the old stash)
 
-	    a Function created at version 1 can migrate at version 2 using the current stash
+	    a Function created at version 1 can migrate to version 2 using the current stash
 	    a Function created at version 0 and first accessed at version 2 cannot migrate, because the stash no longer contains 0->1 and 0->2 is not available)
         """
-        self.vom._topology_lineage = {
-            "from_version": old_version,
-            "old_to_new_point_mapping": old_to_new_point_mapping,
-        }
+        # self.vom._topology_lineage = {
+        #     "from_version": old_version,
+        #     "old_to_new_point_mapping": old_to_new_point_mapping,
+        # }
 
         # --Build a new MeshGeometry object around the new topology--
         tolerance = getattr(self.vom, "_tolerance", self.parent_mesh.tolerance)
@@ -536,6 +503,7 @@ class VertexOnlyMeshUpdater:
         self.vom._parent_mesh = self.parent_mesh
         self.vom._tolerance = tolerance
 
+        
         # --Transfer the new coordinates into the VOM--
         # NOTE: the mesh coordinate field defines the geometry of the mesh. Therefore, it is defined as a CoordinatelessFunction (as opposed to a Function WithGeometry)
         # This means that its function space is built entirely from the mesh topology and the element type, and is not bound to a geometry object.
@@ -543,7 +511,7 @@ class VertexOnlyMeshUpdater:
         # So `_coordinates` is just a vector of numbers laid out in the FS DoF layout. It can exist independently of the mesh.
         # When we access the `mesh.coordinates` field, Firedrake wraps that coordinateless fucnction in a `WithGeometry` function which binds it to the mesh geometry. This allows UFL to treat it as a spatial coordinate field.
         
-        # NOTE: `_coordinates` is a read-only property of MeshGeometry.
+        # NOTE: `_coordinates` is a read-only property of MeshGeometry, the data lives in `ufl_cargo().coordinates`
         # self.vom._coordinates = new_mesh_geometry._coordinates
         self.vom.ufl_cargo().coordinates = new_mesh_geometry.ufl_cargo().coordinates
 
@@ -593,5 +561,12 @@ class VertexOnlyMeshUpdater:
         # TODO: this has to be a collective operation
         self.vom._topology_version += 1
 
-        return self.vom, sf_old_to_new
+        # Initialize the dictionary that stores the one-step SFs lazily, i.e., the first time the VOM gets rebuilt.
+        if not hasattr(self.vom, "_topology_step_sfs"):
+            self.vom._topology_step_sfs = {}
+        
+        # One step SF maps version k (new) -> version k-1 (old) stored under the key k
+        self.vom._topology_step_sfs[self.vom._topology_version] = self.vom.input_ordering_sf 
+
+        return self.vom
 

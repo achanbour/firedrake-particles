@@ -45,7 +45,7 @@ print("Function values at particles (in VOM order): ", fn.dat.data_ro)
 particles_to_remove = [2, 5, 7] # assume indices to be in VOM ordering
 
 vom_updater = VertexOnlyMeshUpdater(vom, mesh)
-_, sf_old_to_new = vom_updater.rebuild_vom(particles_to_remove)
+vom_updater.rebuild_vom(particles_to_remove)
 
 # The first step is to check that the VOM has been properly updated.
 print("Updated particle positions: ", vom.coordinates.dat.data_ro)
@@ -53,24 +53,14 @@ print("Updated particle reference positions: ", vom.reference_coordinates.dat.da
 print("VOM version: ", vom._topology_version)
 
 ## ---
-# Next, we check the input ordering SF considering we've used the current VOM as IO VOM for the updated VOM.
+# Check the input ordering SF considering we've used VOM_0 as IO VOM when rebuilding VOM_0 to VOM_1.
 # The IO SF maps vertices in the input ordering VOM (old) to vertices in the primary VOM (new).
 # print("Input ordering SF for updated VOM: ")
 # vom.input_ordering_sf.view()
 
-# Inspect the SF we constructed that maps new VOM indices to old VOM indices.
 # Note that, in this case, the global order of particles is preserved. This happens because:
-# - we embedd the old coordinates (which are already in VOM order) and create a new swarm in that visible-filtered order
-# - no redistribution occurs when running in serial.
-
-# print("Old-to-new VOM index SF: ")
-# print(sf_old_to_new.view())
-
-# NOTE: 
-# Comparing the two SFs, it seems like both achieve the same mapping but in a different way.
-# The input ordering SF maps old VOM indices to new VOM indices,
-# while our constructed SF maps new VOM indices to old VOM indices.
-# ? Which one is the one to keep? can get rid of the manually constructed one?
+# - we embedd the old coordinates of VOM_0 and create a new swarm picking out only surviving particles
+# - no redistribution occurs as we're running in serial.
 
 ## ---
 # Changing the VOM topology invalidates the Function Spaces and Functions.
@@ -88,10 +78,12 @@ print("Function values at particles after VOM update: ", fn.dat.data_ro)
 # Check references to the old FS
 # `getrefcount` returns the total number of references to an object (including temporary references and multiple refs from the same container).
 # `get_referrers` returns a list of distinct objects referencing the given object.
-print("References to old FS after rebuilding VOM + Function: ",  sys.getrefcount(FS_vom))
-referrers = gc.get_referrers(FS_vom)
-print(f"Number of referrers: {len(referrers)}")
-print(any(ref is fn for ref in referrers)) # False -> fn no longer holds a reference to the old FS
+# print("References to old FS after rebuilding VOM + Function: ",  sys.getrefcount(FS_vom))
+# referrers = gc.get_referrers(FS_vom)
+# print(f"Number of referrers: {len(referrers)}")
+# for i in range(len(referrers)):
+#     print(f"Referrer {i}: {referrers[i]}")
+# print(any(ref is fn for ref in referrers)) # returns False i.e., fn no longer holds a reference to the old FS
 
 ## ---
 # TODO 1: 
