@@ -301,7 +301,8 @@ class VertexOnlyMeshUpdater:
         Rebuild the VOM topology after removing some particles (replicating broadly the steps in `_pic_swarm_in_mesh`).
 
         1) Embedd the coordinates of the current VOM and mark absorbed points as 'missing'.
-        Extended to allow the embedding of updated coordinates if provided.
+        Extended to allow the embedding of updated coordinates if provided. 
+        `new_coords` is assumed to contain the new coordinates of all points including the absorbed ones and listed in current VOM ordering.
 
         2) Rebuild a new DMSwarm with only visible points.
 

@@ -40,12 +40,12 @@ fn_io.dat.data[:] = vals
 fn.interpolate(fn_io)
 print("Function values at particles (in VOM order): ", fn.dat.data_ro)
 
-# Update the particle VOM by removing some particles
-# This causes the VOM topology to change so we need to reconstruct a new DMswarm on the updated particle set.
-particles_to_remove = [2, 5, 7] # assume indices to be in VOM ordering
+# Update the particle VOM by removing some particles and updating physical coordinates
+particles_to_remove = [2, 5, 7] # assume indices to be in current VOM ordering
+new_coords = vom.coordinates.dat.data_ro - 0.01 * np.array([1.0, 0.0])
 
 vom_updater = VertexOnlyMeshUpdater(vom, mesh)
-vom_updater.rebuild_vom(particles_to_remove)
+vom_updater.rebuild_vom(particles_to_remove, new_coords)
 
 # The first step is to check that the VOM has been properly updated.
 print("Updated particle positions: ", vom.coordinates.dat.data_ro)
@@ -53,19 +53,18 @@ print("Updated particle reference positions: ", vom.reference_coordinates.dat.da
 print("VOM version: ", vom._topology_version)
 
 ## ---
-# Check the input ordering SF considering we've used VOM_0 as IO VOM when rebuilding VOM_0 to VOM_1.
-# The IO SF maps vertices in the input ordering VOM (old) to vertices in the primary VOM (new).
+# Check the input ordering SF given we used VOM_0 as IO VOM when rebuilding VOM_0 to VOM_1.
+# The IO SF maps vertices in new VOM (leaves) to vertices in the old VOM (roots).
 # print("Input ordering SF for updated VOM: ")
 # vom.input_ordering_sf.view()
 
-# Note that, in this case, the global order of particles is preserved. This happens because:
-# - we embedd the old coordinates of VOM_0 and create a new swarm picking out only surviving particles
+# NOTE: In this case, the global order of particles is preserved. This happens because:
+# - we embedd the old coordinates of VOM_0 and create a new swarm for VOM_1 picking out only surviving particles
 # - no redistribution occurs as we're running in serial.
 
 ## ---
 # Changing the VOM topology invalidates the Function Spaces and Functions.
-# We attempt to rebuild the Function Spaces and Functions on the updated VOM internally
-# when they are next accessed.
+# We rebuild the Function Spaces and Functions on the updated VOM lazily (when they are first accessed after the rebuild).
 print("Function values at particles after VOM update: ", fn.dat.data_ro)
 
 # print(fn.function_space() is FS_vom)
@@ -76,25 +75,13 @@ print("Function values at particles after VOM update: ", fn.dat.data_ro)
 # so we don't hit stale caches when accessing the new FS data.
 
 # Check references to the old FS
+# NOTE:
 # `getrefcount` returns the total number of references to an object (including temporary references and multiple refs from the same container).
 # `get_referrers` returns a list of distinct objects referencing the given object.
+
 # print("References to old FS after rebuilding VOM + Function: ",  sys.getrefcount(FS_vom))
 # referrers = gc.get_referrers(FS_vom)
 # print(f"Number of referrers: {len(referrers)}")
 # for i in range(len(referrers)):
 #     print(f"Referrer {i}: {referrers[i]}")
 # print(any(ref is fn for ref in referrers)) # returns False i.e., fn no longer holds a reference to the old FS
-
-## ---
-# TODO 1: 
-# Currently, the Functions are still tied to the old VOM so they return values using the old number of particles.
-# We therefore need to:
-# 1. redefine Functions or 
-# 2. force them to use the new VOM topology based on the VOM version number.
-#   This involves updating the FunctionSpaces DM reference to the new VOM DMswarm,
-#   possibly requiring to build an SF between the DM Sections defining the new and old FunctionSpaces.
-
-# TODO 2: 
-# - Inspect how the updater behaves when particle positions are updated in addition to some particles being removed
-#   which is currently the case in the particle tracking loop.
-# - Determine what changes need to be made when redistribution of particles occurs.
