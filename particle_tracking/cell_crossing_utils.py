@@ -45,13 +45,13 @@ def compute_ref_coords_in_new_cell(failed_global,
                                    ref_cell
                                    ):
     """
-    Compute the reference coordinates of particles in their new cells.
+    Compute the reference coordinates of a particle in its new containing cell.
     
-    When a particle crosses a facet from one cell to another, we have its barycentric
+    When a particle crosses a facet from one cell to another, we recompute its barycentric
     coordinates in the current cell (expressed in terms of the current cell's vertices).
     To get its reference coordinates in the new cell, we:
     1. Find the shared vertices on the crossed facet
-    2. Map local vertex indices from the current cell to the new cell
+    2. Map local vertex indices from the current cell to the new cell using global vertex IDs
     3. Construct the barycentric coordinates vector in the new cell
     4. Convert barycentric coordinates to reference coordinates
     """
@@ -73,7 +73,7 @@ def compute_ref_coords_in_new_cell(failed_global,
         
         # Get the global vertex IDs in the current cell
         global_vids_current = mesh.coordinates.function_space().cell_node_list[current_cell].ravel() 
-        global_edge_verts_current = [global_vids_current[v] for v in local_vids_in_crossed_edge]
+        global_crossed_edge_verts = [global_vids_current[v] for v in local_vids_in_crossed_edge]
         
         # Get the global vertex IDs in the next cell
         global_vids_next = mesh.coordinates.function_space().cell_node_list[next_cell].ravel()
@@ -81,17 +81,17 @@ def compute_ref_coords_in_new_cell(failed_global,
         # Build barycentric coordinates in the new cell
         # For each vertex on the shared edge, map its barycentric coordinate
         # from its position in the current cell to its position in the new cell
-        bary_new_cell = np.zeros(n_vertices)
+        bary_coords_new = np.zeros(n_vertices)
         
-        for local_vid_current, global_v_current in zip(local_vids_in_crossed_edge, global_edge_verts_current):
+        for local_vid_current, global_v_current in zip(local_vids_in_crossed_edge, global_crossed_edge_verts):
             # Find which local vertex index in the new cell corresponds to the shared global vertex ID
             for local_vid_next, global_v_next in enumerate(global_vids_next):
                 if global_v_next == global_v_current:
                     # Map the barycentric coordinate
-                    bary_new_cell[local_vid_next] = bary_coords[global_particle_id, local_vid_current]
+                    bary_coords_new[local_vid_next] = bary_coords[global_particle_id, local_vid_current]
                     break
         
         # Convert barycentric coordinates to reference coordinates
-        ref_coords_in_new_cell[idx] = np.dot(bary_new_cell, ref_cell_vertices)
+        ref_coords_in_new_cell[idx] = np.dot(bary_coords_new, ref_cell_vertices)
     
     return ref_coords_in_new_cell
