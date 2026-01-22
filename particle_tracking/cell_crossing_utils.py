@@ -7,6 +7,10 @@ def find_next_cell(mesh,
     
     Returns None if the facet is on the domain boundary.
     """
+    # NOTE: 
+    # - DMPlex gives rank local numbers of the edges (cones of the cell we're in).
+    # - Look up the next cell using the support of the edge crossed -> PETSc local ID of the next cell.
+    # - Look up Firedrake's cell number in the DMPlex. 
 
     # `cell_to_facets` is a PyOp2 Dat that maps each cell to its (local) facets.
     # The i-th local facet of cell c has data stored in cell_to_facets[c][i]
@@ -55,6 +59,7 @@ def compute_ref_coords_in_new_cell(failed_global,
     3. Construct the barycentric coordinates vector in the new cell
     4. Convert barycentric coordinates to reference coordinates
     """
+
     # Get reference cell topology and vertex coordinates
     ref_cell_edges = ref_cell.get_topology()[1]  
     ref_cell_vertices = ref_cell.vertices

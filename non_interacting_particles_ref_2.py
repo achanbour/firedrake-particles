@@ -209,7 +209,7 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
         print()
 
         breakpoint()
-        # TODO: Update the VOM by removing all boundary particles
+        # Now update the VOM by removing all boundary particles
         # i.e., particles that have hit an exterior boundary in one of the iterations above.
         # This causes the VOM topology to change.
 
@@ -262,6 +262,13 @@ def detect_crossings_linear(bary_old, bary_new, dt_left, edges, tol=1e-12):
     passed = np.ones(N_active, dtype=bool)
     t_cross = np.full(N_active, np.inf)
     crossed_edges = np.full(N_active, None, dtype=object)
+    
+    # Precompute the opposite edge for each vertex to avoid repeated lookups
+    edge_lookup = [None] * n_verts
+    for edge_id, edge_verts in edges.items():
+        for v in range(n_verts):
+            if edge_lookup[v] is None and v not in edge_verts:
+                edge_lookup[v] = edge_id
 
     for i in range(N_active):
         dt = dt_left[i]
@@ -316,16 +323,13 @@ def detect_crossings_linear(bary_old, bary_new, dt_left, edges, tol=1e-12):
         t_cross[i] = t_out
 
         # Exit facet is opposite exit_vert
-        for edge_id, edge_verts in edges.items():
-            if exit_vert not in edge_verts:
-                crossed_edges[i] = edge_id
-                break
+        crossed_edges[i] = edge_lookup[exit_vert]
 
     return passed, t_cross, crossed_edges
         
 
 def move_failed_particles_to_facet( failed_global, t_cross, ref_coords_fn, invJ_vom,v_fn, FS_vom):
-    """Move failed particles exactly to their crossing facet."""
+    """Move failed particles to their crossing facet."""
 
     dt_step_fn = Function(FS_vom)
     dt_step_fn.dat.data[failed_global] = t_cross # set dt to t_cross for failed particles only

@@ -1,6 +1,14 @@
 from firedrake import *
 import numpy as np
 
+"""
+This simple example demonstrates how a VertexOnlyMesh gets renumbered differently by Firedrake
+across independent runs. This is due to the fact that the iteration order of sets and dictionaries is non-deterministic in Python.
+
+See PYTHONHASHSEED for more details on hash randomization:
+https://docs.python.org/3/using/cmdline.html#envvar-PYTHONHASHSEED
+"""
+
 mesh = UnitSquareMesh(10, 10)
 N = 10
 particle_coords = np.random.rand(N, 2)
