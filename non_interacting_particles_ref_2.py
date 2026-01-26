@@ -3,6 +3,7 @@ import numpy as np
 from update_vom import VertexOnlyMeshUpdater
 from particle_tracking.cell_crossing_utils import find_next_cell, compute_ref_coords_in_new_cell
 from ufl.differentiation import ReferenceGrad
+from FIAT.reference_element import UFCInterval, UFCQuadrilateral, UFCTriangle, UFCHexahedron, UFCTetrahedron
 
 np.random.seed(42)
 
@@ -16,9 +17,8 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
 
     X(t + dt) = X(t) + J^-1*v*dt 
     
-    where J = dF/dX is the Jacobian of the geometric map from reference space to the physical space F: X -> x.
+    where J = dF/dX is the Jacobian of the geometric map F: X -> x.
     """
-    # Initialize static variables
     N = pmesh.num_vertices()
     x = SpatialCoordinate(mesh)
     invJ_expr = inv(ReferenceGrad(x))
@@ -28,21 +28,18 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
     pmesh_updater = VertexOnlyMeshUpdater(pmesh, mesh)
 
     while t < T:
-        # At the start of each global time step, the particle VOM will have been updated.
-        # If the update doesn't change the VOM object, the following lines can be moved outside the while loop
-        # so that we don't need to re-define FunctionSpaces and Functions every time.
         TFS_vom = TensorFunctionSpace(pmesh, "DG", 0) # Tensor FS for the Jacobian inverse
         invJ_vom = Function(TFS_vom)  
         FS_vom = FunctionSpace(pmesh, "DG", 0) # Scalar FS for per-particle time steps
 
-        # Get the current reference coordinates Function
+        # Get the current reference coordinates
         ref_coords_fn = pmesh.reference_coordinates
 
         boundary_particles = [] # list to keep track of particles that hit the domain boundary
 
         # Define per-particle tracking loop variables
         dt_left = np.full(N, dt) # remaining time for the current time step
-        ref_coords_register = ref_coords_fn.dat.data_ro.copy() # register to hold updated ref. coords
+        ref_coords_register = ref_coords_fn.dat.data_ro.copy() # registery of updated ref. coords
 
         # Run outer loop while there are active particles (those that have not yet finished their dt)
         outer_loop_iter = 0
@@ -62,7 +59,7 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
             active_indices = np.where(active)[0]
             active_iters[active_indices] += 1
 
-            # -- Phase 0: Process active particles --
+            # -- Process active particles --
             # For all currently active particles, compute updated positions and detect crossings
             dt_trial_fn = Function(FS_vom)
 
@@ -72,13 +69,39 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
             invJ_vom.interpolate(invJ_expr) # recompute invJ on the CURRENT embedding
             trial_ref_pos_fn = update_ref_pos(ref_coords_fn, invJ_vom, v_fn, dt_trial_fn)
 
-            # Compute barycentric coordinates
-            bary_old = ref_cell.compute_barycentric_coordinates(np.array(ref_coords_fn.dat.data_ro))
-            bary_new = ref_cell.compute_barycentric_coordinates(np.array(trial_ref_pos_fn.dat.data_ro))
+            # Compute barycentric coordinates based on ref cell type
+            if isinstance(ref_cell, (UFCInterval, UFCTriangle, UFCTetrahedron)):
+                # For simplex-based cells, compute vertex barycentric coordinates directly
+                bary_old = ref_cell.compute_barycentric_coordinates(ref_coords_fn.dat.data_ro)
+                bary_new = ref_cell.compute_barycentric_coordinates(trial_ref_pos_fn.dat.data_ro)
+
+            elif isinstance(ref_cell, (UFCQuadrilateral, UFCHexahedron)):
+                # For tensor-product cells, compute barycentric coordinates per axis
+                tp_cell = ref_cell.product # unflattened tensor product element
+                axes = tp_cell.cells
+                slices = tp_cell._split_slices([c.get_dimension() for c in axes])
+
+                bary_old_per_axis = []
+                bary_new_per_axis = []
+                for axis, slice in zip(axes, slices):
+                    bary_old_per_axis.append(
+                        axis.compute_barycentric_coordinates(ref_coords_fn.dat.data_ro[:, slice])
+                    )
+                    bary_new_per_axis.append(
+                        axis.compute_barycentric_coordinates(trial_ref_pos_fn.dat.data_ro[:, slice])
+                    )
+                # Stack the axes barycentric coordinates
+                bary_old = np.hstack(bary_old_per_axis)
+                bary_new = np.hstack(bary_new_per_axis)
+
+            else:
+                raise NotImplementedError(
+                    f"Barycentric coordinate computation not implemented for cell type {type(ref_cell)}"
+                )
             
-            # Detect crossings and split particles into passed/failed subsets (on the currently active set)
+            # Detect crossings and split particles into passed/failed subsets
             passed_mask, t_cross_local, crossed_edges_local = detect_crossings_linear(
-                bary_old[active_indices], bary_new[active_indices], dt_left[active_indices], ref_cell_edges
+                bary_old[active_indices], bary_new[active_indices], dt_left[active_indices], ref_cell
             )
 
             # Get local indices (in the currently active set) of passed/failed particles
@@ -107,7 +130,7 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
             print(f"  Failed set: {failed_global}")
             print(f"  Passed set: {passed_global}")
 
-            # -- Phase 1: Process passed and failed particles separately --
+            # -- Process passed and failed particles separately --
             # Passed particles
             if len(passed_global) > 0:
                 dt_left[passed_global] = 0
@@ -120,7 +143,7 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
             # Failed particles
             if len(failed_global) > 0:
                 print("\nMoving failed particles to crossing facets...")
-                # Get particle positions at the crossing facet
+                # Compute particle positions at the crossing facet
                 new_ref_coords_at_facet = move_failed_particles_to_facet(
                     failed_global, t_cross_local[failed_local], ref_coords_fn, invJ_vom, v_fn, FS_vom
                 )
@@ -133,26 +156,26 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
 
                 # Validate the new particle positions:
                 # - Passed particles should be inside their original parent cells
-                # - Failed particles should be on a facet of their original parent cells
-                #   (i.e., at least one barycentric coordinate is approx 0)
-                print("\nComputing barycentric coordinates at the new reference positions...")
-                new_bary_coords = ref_cell.compute_barycentric_coordinates(np.array(ref_coords_register))
-                tol = 1e-12
-                for global_i in passed_global:
-                    if np.any(new_bary_coords[global_i] < -tol):
-                        print(f"Error: Passed particle {global_i} is outside its cell.")
-                
-                for global_i in failed_global:
-                    if not np.any(np.abs(new_bary_coords[global_i]) < tol):
-                        print(f"Warning: Failed particle {global_i} is not on a facet.")
-                    if np.any(new_bary_coords[global_i] < -tol):
-                        print(f"Error: Failed particle {global_i} has been moved past the facet.")
-                print("Barycentric validation complete.")
+                # - Failed particles should be on a facet of their original parent cells (one barycentric coord. is zero)
 
-                # 2) Move failed particles to neighbouring cells using the crossed_edges info
-                # Get the current parent cell ownrship
-                # NOTE: update_ref_view deletes the cached properties of the particle VOM involving the parent cell ownership 
-                # therefore we need to re-access the cell_parent_cell_list attribute after updating the VOM to ensure it gets recomputed correctly.
+                # print("\nComputing barycentric coordinates at the new reference positions...")
+                # new_bary_coords = ref_cell.compute_barycentric_coordinates(np.array(ref_coords_register))
+                # tol = 1e-12
+                # for global_i in passed_global:
+                #     if np.any(new_bary_coords[global_i] < -tol):
+                #         print(f"Error: Passed particle {global_i} is outside its cell.")
+                
+                # for global_i in failed_global:
+                #     if not np.any(np.abs(new_bary_coords[global_i]) < tol):
+                #         print(f"Warning: Failed particle {global_i} is not on a facet.")
+                #     if np.any(new_bary_coords[global_i] < -tol):
+                #         print(f"Error: Failed particle {global_i} has been moved past the facet.")
+                # print("Barycentric validation complete.")
+
+                # NOTE: Skipping the above as it currently works only for simplex cells.
+
+                breakpoint()
+                # 2) Move failed particles to neighbouring cells using the crossed_edges_local info
                 print("\nSearching for next parent cells for failed particles...")
                 parent_cells = pmesh.topology.cell_parent_cell_list # ID of parent cell for each point in VOM order
                 next_parent_cells = parent_cells.copy()
@@ -177,6 +200,7 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
                 # For failed particles at the crossing facets, map their barycentric coordinates
                 # from the current cells to the neighboring cells, then convert to reference coordinates
 
+                breakpoint()
                 print("\nComputing new reference coordinates in the neighbouring cells...")
                 new_ref_coords_in_new_cells = compute_ref_coords_in_new_cell(
                     failed_global,
@@ -243,32 +267,26 @@ def update_ref_pos(ref_pos_fn, invJ_vom, v_fn, dt_fn):
     new_ref_pos_fn = assemble(interpolate(update_expr, ref_pos_fn.function_space()))
     return new_ref_pos_fn
 
-def detect_crossings_linear(bary_old, bary_new, dt_left, edges, tol=1e-12):
+def detect_crossings_linear(bary_old, bary_new, dt_left, ref_cell, tol=1e-12):
     """
-    An interval-based crossing detection algorithm that finds the last facet crossed.
+    An interval-based crossing detection algorithm that finds the last facet crossed by a particle in a given time step.
 
-    This method is used instead of the root-finding approach previously used: 
-    find the roots of lambda_j(t) for each lambda_j then take the max. among all crossing times.
-    This approach is not correct since not all crossings are feasible (some correspond to intersections outside the cell). 
+    This method is used instead of the root-finding approach which consists in finding the roots of lambda_j(t) for each 
+    lambda_j then taking the max. among all crossing times.
+    This approach is not correct since not all crossings are feasible (some may correspond to intersections outside the cell). 
 
     For each particle, compute the time interval during which the particle remained inside the cell 
     i.e., during which all barycentric coordinates are non negative. 
-    The exit time is taken as the upper bound of this interval (corresponding to the last crossing).
+    The exit time is taken as the upper bound of this interval (giving us the last crossing).
 
-    NOTE: The arguments to this function are assumed to refer to the currently active set of particles.
+    The arguments `bary_old`, `bary_new` and `dt_left` are assumed to refer to the currently active set of particles.
+    The argument `ref_cell_edges` refer to the reference cell topology map which maps each local edge ID to the local vertex IDs forming that edge.
     """
 
-    N_active, n_verts = bary_new.shape
+    N_active, n_coords = bary_new.shape
     passed = np.ones(N_active, dtype=bool)
     t_cross = np.full(N_active, np.inf)
     crossed_edges = np.full(N_active, None, dtype=object)
-    
-    # Precompute the opposite edge for each vertex to avoid repeated lookups
-    edge_lookup = [None] * n_verts
-    for edge_id, edge_verts in edges.items():
-        for v in range(n_verts):
-            if edge_lookup[v] is None and v not in edge_verts:
-                edge_lookup[v] = edge_id
 
     for i in range(N_active):
         dt = dt_left[i]
@@ -276,15 +294,11 @@ def detect_crossings_linear(bary_old, bary_new, dt_left, edges, tol=1e-12):
         lambda_new = bary_new[i]
         dlambda = (lambda_new - lambda_old) / dt # derivative of the barycentric trajectory
 
-        # Time interval during which the particle is inside the cell
-        t_in = 0.0
         t_out = dt
-        exit_vert = None
-
+        exit_coord = None
         feasible = True
 
-        # The code below seeks the feasible time interval [t_in, t_out] during which all barycentric coordinates are non-negative
-        for j in range(n_verts):
+        for j in range(n_coords):
             if abs(dlambda[j]) < tol:
                 # lambda_j constant
                 if lambda_old[j] < -tol:
@@ -294,19 +308,15 @@ def detect_crossings_linear(bary_old, bary_new, dt_left, edges, tol=1e-12):
 
             t_zero = -lambda_old[j] / dlambda[j] # time when lambda_j becomes zero
 
-            if dlambda[j] > 0:
-                # lambda_j increasing: particle enters the cell at t_zero
-                if t_zero > t_in:
-                    t_in = t_zero
-            else:
+            if dlambda[j] < 0:
                 # lambda_j decreasing: particle exits the cell at t_zero
                 if t_zero < t_out:
                     t_out = t_zero
-                    exit_vert = j
+                    exit_coord = j
 
         # No valid intersection with the cell
         # NOTE: a slightly negative t_out due to numerical roundoff can cause t_in > t_out so we allow a small tolerance here.
-        if not feasible or t_out < -tol or t_out > dt + tol or t_in > t_out + tol:
+        if not feasible or t_out < -tol or t_out > dt + tol:
             passed[i] = False
             t_cross[i] = 0.0
             crossed_edges[i] = None
@@ -316,14 +326,27 @@ def detect_crossings_linear(bary_old, bary_new, dt_left, edges, tol=1e-12):
         if t_out >= dt - tol:
             continue
 
-        # Otherwise, particle exits at t_out
-        # NOTE: this includes the case where t_out is approx. 0 such as when a particle starts on a facet 
+        # Particle exits at t_out
+        # NOTE: This includes the case where t_out is approx. 0 such as when a particle starts on a facet 
         # and moves outward through the same facet.
         passed[i] = False
         t_cross[i] = t_out
 
-        # Exit facet is opposite exit_vert
-        crossed_edges[i] = edge_lookup[exit_vert]
+        # Identify the edge crossed based on the exit coordinate
+        # For simplicies, this is the edge opposite the exit coordinate   
+        # For tensor-product cells, we need a mapping that maps the exit coordinate to the corresponding facet
+        coord_to_facet = {}
+        if isinstance(ref_cell, (UFCInterval, UFCTriangle, UFCTetrahedron)):
+            for edge_id, vertex_ids in ref_cell.get_topology()[1].items():
+                for v in range(n_coords):
+                    if v not in vertex_ids:
+                        coord_to_facet[v] = edge_id
+                        break
+
+        elif isinstance(ref_cell, (UFCQuadrilateral, UFCHexahedron)):
+            coord_to_facet = build_coord_to_facet_map_for_tensor_ref_cell(ref_cell, tol=tol)
+
+        crossed_edges[i] = coord_to_facet[exit_coord]
 
     return passed, t_cross, crossed_edges
         
@@ -342,9 +365,49 @@ def move_failed_particles_to_facet( failed_global, t_cross, ref_coords_fn, invJ_
 
     return ref_coords_at_facet
 
+def build_coord_to_facet_map_for_tensor_ref_cell(ref_cell, tol=1e-12):
+    """
+    Return a mapping from the index in the stacked barycentric coords vector
+    to the local facet ID of a tensor-product reference cell (e.g., UFCQuadrilateral).
+    """
+    coord_to_facet = {}
+
+    facet_dim = ref_cell.get_spatial_dimension() - 1
+    tp_cell = ref_cell.product
+    axes = tp_cell.cells
+
+    # Track where each axis's barycentric coordinates start in the stacked vector
+    axes_offsets = []
+    offset = 0
+    for a in axes:
+        axes_offsets.append(offset)
+        offset += a.get_dimension() + 1
+
+    # Slices for extracting sub-coordinates
+    slices = tp_cell._split_slices([ax.get_dimension() for ax in axes])
+
+    for facet_id in range(len(ref_cell.get_topology()[facet_dim])):
+        phi = ref_cell.get_entity_transform(facet_dim, facet_id) # get the mapping from the facet local coords to the full cell coordsbreakpoint()
+        midpoint = np.full((1, facet_dim), 0.5) # facet midpoint in facet ref coords
+        mapped = phi(midpoint)[0] # facet midpoint in full cell ref coords
+
+        # For each axis, compute which barycentric coordinate vanishes at the mapped point
+        for i, (axis, slice) in enumerate(zip(axes, slices)):
+            axis_coords = mapped[slice] # extract ref coordinates along this axis
+            lambdas = axis.compute_barycentric_coordinates(axis_coords.reshape(1, -1))[0]
+
+            for local_idx, val in enumerate(lambdas):
+                if abs(val) < tol:
+                    global_index = axes_offsets[i] + local_idx
+                    coord_to_facet[global_index] = facet_id
+                    break
+                
+    return coord_to_facet
+
+
 if __name__=='__main__':
     # Define the parent mesh
-    mesh = UnitSquareMesh(10, 10)
+    mesh = UnitSquareMesh(10, 10, quadrilateral=False)
     # mesh = PeriodicUnitSquareMesh(10, 10)
 
     # Define the particles in a VOM
