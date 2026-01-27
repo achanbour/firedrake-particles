@@ -2,42 +2,46 @@ import numpy as np
 
 def find_next_cell(mesh, 
                    cell, 
-                   local_facet_id):
-    """Find the neighbouring cell across a given facet of a cell.
+                   edge_id):
+    """
+    Find the neighbouring cell across a given facet of a cell.
     
     Returns None if the facet is on the domain boundary.
     """
     # NOTE: 
-    # - DMPlex gives rank local numbers of the edges (cones of the cell we're in).
+    # - DMPlex gives rank local numbers of the edges (cones of the cell we're currently in).
     # - Look up the next cell using the support of the edge crossed -> PETSc local ID of the next cell.
     # - Look up Firedrake's cell number in the DMPlex. 
 
-    # `cell_to_facets` is a PyOp2 Dat that maps each cell to its (local) facets.
-    # The i-th local facet of cell c has data stored in cell_to_facets[c][i]
-    # which returns a list [is_exterior, subdomain marker]
-    cell_facet_data = mesh.cell_to_facets.data_ro[cell][local_facet_id]
-    is_exterior = cell_facet_data[0]
-    if not bool(is_exterior):
+    plex = mesh.topology_dm
+
+    # Get the DMPlex cell number for the current Firedrake cell
+    # `cell_closure` provides the mapping from Firedrake entity indices -> DMPlex point numbering
+    # `cell_closure` lists entities in increasing dimension order, first vertices then edges and finally facets/cells
+    plex_cell = mesh.topology.cell_closure[cell, -1]
+
+    # Compute the offset to get the edge point number in DMPlex
+    num_vertices = mesh.ufl_cell().num_vertices
+    plex_edge = mesh.topology.cell_closure[cell, num_vertices + edge_id]
+
+    # Find the neighbouring cell using the support of this edge
+    # (support gives entities one dimension higher)
+    support_size = plex.getSupportSize(plex_edge)
+
+    if support_size < 2:
         return None # boundary facet
     
-    # `interior_facets.facet_cell` returns the two cells incident to each interior facet
-    interior_cells = mesh.interior_facets.facet_cell # (num_interior_facets, 2) -> returns the two cells incident to each interior facet.
-    local_facet_numbers = mesh.interior_facets.local_facet_dat.data_ro # (num_interior_facets, 2) -> returns the local facet ID in each adjacent cell.
+    # Get the cells sharing this edge
+    support = plex.getSupport(plex_edge)
 
-    for f in range(interior_cells.shape[0]):
-        c0, c1 = interior_cells[f] # get the two cells adjacent to facet f
-        lf0, lf1 = local_facet_numbers[f] # get the local facet ID in each adjacent cell
-
-        # The neighbour cell is the one that is not equal to `cell` by exclusion
-        if c0 == cell and lf0 == local_facet_id:
-            return c1
-        if c1 == cell and lf1 == local_facet_id:
-            return c0
-    
-    # This should never happen for a valid interior facet
-    raise RuntimeError(
-        f"Interior facet not found for cell {cell}, local facet {local_facet_id}"
-    )
+    # Find the neighbour (cell that isn't the current one)
+    plex_cell_numbers = mesh.topology._cell_numbering
+    for plex_neigh in support:
+        if plex_neigh != plex_cell:
+            # Convert back to Firedrake cell numbering
+            # `._cell_numbering` provides the mapping DMPlex point numbering -> Firedreake entity indices
+            neighbour_cell = plex_cell_numbers.getOffset(plex_neigh)
+            return neighbour_cell
 
 
 def compute_ref_coords_in_new_cell(failed_global,
@@ -100,3 +104,44 @@ def compute_ref_coords_in_new_cell(failed_global,
         ref_coords_in_new_cell[idx] = np.dot(bary_coords_new, ref_cell_vertices)
     
     return ref_coords_in_new_cell
+
+# def find_next_cell(mesh, 
+#                    cell, 
+#                    local_facet_id):
+#     """
+#     Find the neighbouring cell across a given facet of a cell.
+    
+#     Returns None if the facet is on the domain boundary.
+#     """
+#     # NOTE: 
+#     # - DMPlex gives rank local numbers of the edges (cones of the cell we're currently in).
+#     # - Look up the next cell using the support of the edge crossed -> PETSc local ID of the next cell.
+#     # - Look up Firedrake's cell number in the DMPlex. 
+
+#     # `cell_to_facets` is a PyOp2 Dat that maps each cell to its (local) facets.
+#     # The i-th local facet of cell c has data stored in cell_to_facets[c][i]
+#     # which returns a list [is_exterior, subdomain marker]
+#     cell_facet_data = mesh.cell_to_facets.data_ro[cell][local_facet_id]
+#     is_exterior = cell_facet_data[0]
+
+#     if not bool(is_exterior):
+#         return None # boundary facet
+    
+#     # `interior_facets.facet_cell` returns the two cells incident to each interior facet
+#     interior_cells = mesh.interior_facets.facet_cell # (num_interior_facets, 2) -> returns the two cells incident to each interior facet.
+#     local_facet_numbers = mesh.interior_facets.local_facet_dat.data_ro # (num_interior_facets, 2) -> returns the local facet ID in each adjacent cell.
+
+#     for f in range(interior_cells.shape[0]):
+#         c0, c1 = interior_cells[f] # get the two cells adjacent to facet f
+#         lf0, lf1 = local_facet_numbers[f] # get the local facet ID in each adjacent cell
+
+#         # The neighbour cell is the one that is not equal to `cell` by exclusion
+#         if c0 == cell and lf0 == local_facet_id:
+#             return c1
+#         if c1 == cell and lf1 == local_facet_id:
+#             return c0
+    
+#     # This should never happen for a valid interior facet
+#     raise RuntimeError(
+#         f"Interior facet not found for cell {cell}, local facet {local_facet_id}"
+#     )

@@ -142,7 +142,6 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
 
             # Failed particles
             if len(failed_global) > 0:
-                print("\nMoving failed particles to crossing facets...")
                 # Compute particle positions at the crossing facet
                 new_ref_coords_at_facet = move_failed_particles_to_facet(
                     failed_global, t_cross_local[failed_local], ref_coords_fn, invJ_vom, v_fn, FS_vom
@@ -174,38 +173,33 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
 
                 # NOTE: Skipping the above as it currently works only for simplex cells.
 
-                breakpoint()
-                # 2) Move failed particles to neighbouring cells using the crossed_edges_local info
-                print("\nSearching for next parent cells for failed particles...")
-                parent_cells = pmesh.topology.cell_parent_cell_list # ID of parent cell for each point in VOM order
-                next_parent_cells = parent_cells.copy()
+                # 2) Move failed particles to neighbouring cells given the crossed facets info
+                parent_cells = pmesh.topology.cell_parent_cell_list # parent cell ID for each point in VOM order
+                new_parent_cells = parent_cells.copy()
 
                 for local_i, global_i in zip(failed_local, failed_global):
                     parent_cell = parent_cells[global_i, 0]
-                    edge_id = crossed_edges_local[local_i]
+                    crossed_edge_id = crossed_edges_local[local_i]
 
-                    next_cell = find_next_cell(mesh, parent_cell, edge_id)
+                    next_cell = find_next_cell(mesh, parent_cell, crossed_edge_id)
 
                     if next_cell is None:
                         # Exterior boundary hit
-                        next_parent_cells[global_i] = parent_cell
+                        new_parent_cells[global_i] = parent_cell
                         boundary_particles.append(global_i)
                         dt_left[global_i] = 0.0
                         print(f"Warning: Particle {global_i} attempted to cross an exterior boundary facet from cell {parent_cell}")
                     else:
-                        next_parent_cells[global_i] = next_cell
-                print("All neighbouring cells determined.")
+                        new_parent_cells[global_i] = next_cell
 
                 # 3) Compute reference coordinates in the new parent cells
                 # For failed particles at the crossing facets, map their barycentric coordinates
                 # from the current cells to the neighboring cells, then convert to reference coordinates
-
                 breakpoint()
-                print("\nComputing new reference coordinates in the neighbouring cells...")
                 new_ref_coords_in_new_cells = compute_ref_coords_in_new_cell(
                     failed_global,
                     parent_cells,
-                    next_parent_cells,
+                    new_parent_cells,
                     crossed_edges_local[failed_local],
                     new_bary_coords,
                     mesh,
@@ -217,7 +211,7 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
             # 4) Update the particle VOM:
             # - modify parent cell ownership
             # - update the reference coordinates (otherwise the next assemble/interpolate update will give wrong results)
-            pmesh_updater.update_ref_view(next_parent_cells, ref_coords_register)
+            pmesh_updater.update_ref_view(new_parent_cells, ref_coords_register)
 
             # - recompute inverse Jacobian using new parent cell ownership (done at start of outer loop)
             # 5) Re-enter the outer loop with new ref. coords., parent cells and remaining dt_left
