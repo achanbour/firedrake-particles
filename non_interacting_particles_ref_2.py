@@ -193,15 +193,12 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
                         new_parent_cells[global_i] = next_cell
 
                 # 3) Compute reference coordinates in the new parent cells
-                # For failed particles at the crossing facets, map their barycentric coordinates
-                # from the current cells to the neighboring cells, then convert to reference coordinates
-                breakpoint()
                 new_ref_coords_in_new_cells = compute_ref_coords_in_new_cell(
                     failed_global,
                     parent_cells,
                     new_parent_cells,
                     crossed_edges_local[failed_local],
-                    new_bary_coords,
+                    ref_coords_register,
                     mesh,
                     ref_cell
                 )
@@ -326,9 +323,9 @@ def detect_crossings_linear(bary_old, bary_new, dt_left, ref_cell, tol=1e-12):
         passed[i] = False
         t_cross[i] = t_out
 
-        # Identify the edge crossed based on the exit coordinate
-        # For simplicies, this is the edge opposite the exit coordinate   
-        # For tensor-product cells, we need a mapping that maps the exit coordinate to the corresponding facet
+        # Identify the edge crossed based on the vanishing barycentric coordinate
+        # For simplicies, this is the edge opposite the vanishing barycentric coord.
+        # For tensor-product cells, construct a mapping from barycentric coord. to facet ID.
         coord_to_facet = {}
         if isinstance(ref_cell, (UFCInterval, UFCTriangle, UFCTetrahedron)):
             for edge_id, vertex_ids in ref_cell.get_topology()[1].items():
@@ -338,7 +335,7 @@ def detect_crossings_linear(bary_old, bary_new, dt_left, ref_cell, tol=1e-12):
                         break
 
         elif isinstance(ref_cell, (UFCQuadrilateral, UFCHexahedron)):
-            coord_to_facet = build_coord_to_facet_map_for_tensor_ref_cell(ref_cell, tol=tol)
+            coord_to_facet = build_barycentric_facet_map_for_tensor_ref_cell(ref_cell, tol=tol)
 
         crossed_edges[i] = coord_to_facet[exit_coord]
 
@@ -359,7 +356,7 @@ def move_failed_particles_to_facet( failed_global, t_cross, ref_coords_fn, invJ_
 
     return ref_coords_at_facet
 
-def build_coord_to_facet_map_for_tensor_ref_cell(ref_cell, tol=1e-12):
+def build_barycentric_facet_map_for_tensor_ref_cell(ref_cell, tol=1e-12):
     """
     Return a mapping from the index in the stacked barycentric coords vector
     to the local facet ID of a tensor-product reference cell (e.g., UFCQuadrilateral).
@@ -401,7 +398,7 @@ def build_coord_to_facet_map_for_tensor_ref_cell(ref_cell, tol=1e-12):
 
 if __name__=='__main__':
     # Define the parent mesh
-    mesh = UnitSquareMesh(10, 10, quadrilateral=False)
+    mesh = UnitSquareMesh(10, 10, quadrilateral=True)
     # mesh = PeriodicUnitSquareMesh(10, 10)
 
     # Define the particles in a VOM

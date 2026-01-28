@@ -2,10 +2,9 @@ from firedrake import *
 import numpy as np
 
 
-def build_coord_to_facet_map_for_tensor_ref_cell(ref_cell, tol=1e-12):
+def build_barycentric_facet_map_for_tensor_ref_cell(ref_cell, tol=1e-12):
     """
-    Return a mapping from the index in the stacked barycentric coords vector
-    to the local facet ID of a tensor-product reference cell (e.g., UFCQuadrilateral).
+    Return a mapping from cell barycentric coordinates to cell facet ID of a tensor-product reference cell (e.g., UFCQuadrilateral).
     """
     coord_to_facet = {}
 
@@ -13,7 +12,7 @@ def build_coord_to_facet_map_for_tensor_ref_cell(ref_cell, tol=1e-12):
     tp_cell = ref_cell.product
     axes = tp_cell.cells
 
-    # Track where each axis's barycentric coordinates start in the stacked vector
+    # Track where each axis' barycentric coordinates start in the stacked vector
     axes_offsets = []
     offset = 0
     for a in axes:
@@ -24,10 +23,10 @@ def build_coord_to_facet_map_for_tensor_ref_cell(ref_cell, tol=1e-12):
     slices = tp_cell._split_slices([ax.get_dimension() for ax in axes])
 
     for facet_id in range(len(ref_cell.get_topology()[facet_dim])):
-        phi = ref_cell.get_entity_transform(facet_dim, facet_id) # get the mapping from the facet local coords to the full cell coordsbreakpoint()
-        breakpoint()
-        midpoint = np.full((1, facet_dim), 0.5) # facet midpoint in facet ref coords
-        mapped = phi(midpoint)[0] # facet midpoint in full cell ref coords
+        # Define a point on the facet and get its reference coordinates in the full cell
+        phi = ref_cell.get_entity_transform(facet_dim, facet_id) # mapping from the facet local coords to the full cell coords
+        midpoint = np.full((1, facet_dim), 0.5) 
+        mapped = phi(midpoint)[0]
 
         # For each axis, compute which barycentric coordinate vanishes at the mapped point
         for i, (axis, slice) in enumerate(zip(axes, slices)):
@@ -59,15 +58,17 @@ ref_cell = quad_mesh.coordinates.function_space().finat_element.cell
 # ref_cell.get_topology()
 # ref_cell.compute_barycentric_coordinates() # not implemented for tensor-product cells
 
-# UFCQuadrilateral is a child of UFCHypercube which wraps a TensorProductCell in `product` attribute
+# ref_cell is a UFCQuadrilateral which is a child of UFCHypercube 
+# which wraps a TensorProductCell in its `product` attribute
 tp_cell = ref_cell.product
 
 # each factor is an interval element (UFCInterval)
 factors = tp_cell.cells 
 
-# breakpoint()
+breakpoint()
 
-coord_to_facet_map = build_coord_to_facet_map_for_tensor_ref_cell(ref_cell)
+coord_to_facet_map = build_barycentric_facet_map_for_tensor_ref_cell(ref_cell)
 print("Coord to facet map for quad cell: ", coord_to_facet_map)
 
 
+    
