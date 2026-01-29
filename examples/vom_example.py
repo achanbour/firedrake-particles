@@ -2,28 +2,40 @@ from firedrake import *
 import numpy as np
 
 """
-This simple example demonstrates how a VertexOnlyMesh gets renumbered differently by Firedrake
-across independent runs. This is due to the fact that the iteration order of sets and dictionaries is non-deterministic in Python.
-
-See PYTHONHASHSEED for more details on hash randomization:
-https://docs.python.org/3/using/cmdline.html#envvar-PYTHONHASHSEED
+This simple example demonstrates how a VertexOnlyMesh gets renumbered differently by Firedrake across independent runs.
 """
 
 mesh = UnitSquareMesh(10, 10)
 N = 10
-particle_coords = np.random.rand(N, 2)
-vom = VertexOnlyMesh(mesh, particle_coords)
+point_coords = np.random.rand(N, 2)
+
+vom = VertexOnlyMesh(mesh, point_coords)
+
+# Inspect the permutation IS of the VOM.
+# This gives a re-ordering of the DMSwarm points based on parent mesh cell numbering
+# `_renumbering_entities` gets the parent mesh DMPlex renumbering, the parent cell IDs,
+# the inverse of the of the parent mesh renumbering (from current to old numbering), 
+# then sorts particles by their parent cell's original numbering
+# This gives particles in original cell 0 first, then cell 1, then cell 2 ...
+
+# The reason for undoing the parent mesh renumbering is because it's inherently non-deterministic 
+# (due to hash randomization, MPI rank distribution etc.)
+# but we want a deterministic ordering of the VOM.
+# mesh partitioning (which rank owns which cells) and entity processing (marking as owned/halo)
+# involve hash-based data structures (sets/dicts) where iteration order is non deterministic
+# different hash values -> different position in internal arrays -> different iteration order
+# -> different processing order -> different final entity numbering
+
+vom_perm_is = vom.topology._dm_renumbering
+parent_mesh_perm_is = vom._parent_mesh._dm_renumbering
+print(vom_perm_is.getIndices())
+print(parent_mesh_perm_is.getIndices())
+
 io_vom = vom.input_ordering
-
-# print("Initial particle positions (in input order): ", particle_coords)
-# print("Initial particle positions (in primary VOM order): ", vom.coordinates.dat.data_ro)
-# print("Initial particle reference positions: ", vom.reference_coordinates.dat.data_ro)
-
-FS_vom = VectorFunctionSpace(vom, "DG", 0, dim=2) # a FS on the primary VOM
-FS_io_vom = VectorFunctionSpace(io_vom, "DG", 0, dim=2) # a FS on the input ordering VOM
-
-fn = Function(FS_vom) # a Function on the primary VOM
-fn_io = Function(FS_io_vom) # a Function on the input ordering VOM
+FS_vom = VectorFunctionSpace(vom, "DG", 0, dim=2) 
+FS_io_vom = VectorFunctionSpace(io_vom, "DG", 0, dim=2) 
+fn = Function(FS_vom) 
+fn_io = Function(FS_io_vom) 
 vals = np.array([
     [10.5, 2.1],
     [2.4, 3.2],
