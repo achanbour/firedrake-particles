@@ -223,17 +223,17 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
         print("=" * 60)
         print()
 
-        breakpoint()
+        # breakpoint()
         # Now update the VOM by removing all boundary particles
         # i.e., particles that have hit an exterior boundary in one of the iterations above.
         # This causes the VOM topology to change.
 
-        # -- Compute new physical coordinates and update VOM
-        new_phys_coords = np.einsum('in, ing->ig', new_bary_coords, cells_coords) # in VOM ordering
-        # print("new_phys_coords: ", new_phys_coords)
-        new_phys_coords_func = Function(coords.function_space())
-        new_phys_coords_func.dat.data[:] = new_phys_coords
-        pmesh_updater.update(new_phys_coords_func)
+        # Rebuild the VOM given the updated particle positions
+        # NOTE: Physical coordinates can be obtained from reference coordinates by interpolating the parent mesh into the VOM
+        # Interpolation makes use of the parent cell ownership information and reference coordinates of VOM points
+        # new_phys_coords = compute_phys_coords_from_ref_coords(ref_coords_register, pmesh.topology.cell_parent_cell_list, mesh, ref_cell)
+        new_phys_coords = assemble(interpolate(SpatialCoordinate(mesh), pmesh.coordinates.function_space()))
+        pmesh_updater.rebuild_vom(absorbed_vom_indices=boundary_particles, new_coords=new_phys_coords.dat.data_ro)
 
         t += dt
 
@@ -395,10 +395,66 @@ def build_barycentric_facet_map_for_tensor_ref_cell(ref_cell, tol=1e-12):
                 
     return coord_to_facet
 
+# def compute_phys_coords_from_ref_coords(ref_coords_register,
+#                         parent_cells,
+#                         mesh,
+#                         ref_cell):
+#     """
+#     Compute physical coordinates from reference coordinates for all particles.
+#     Works for simplices and tensor-product cells (quads, hexahedra).
+    
+#     Args:
+#         ref_coords_register: Reference coordinates for all particles
+#         parent_cells: Parent cell IDs for all particles
+#         mesh: Parent mesh
+#         ref_cell: FIAT reference cell
+    
+#     Returns:
+#         Physical coordinates of particles
+#     """
+#     N_particles = len(ref_coords_register)
+#     gdim = mesh.geometric_dimension
+#     phys_coords = np.zeros((N_particles, gdim))
+    
+#     # Get cell vertices for all particles
+#     nverts = mesh.coordinates.cell_node_map().arity
+#     cells_coords = np.zeros((N_particles, nverts, gdim))
+    
+#     for i in range(N_particles):
+#         cell_num = parent_cells[i]
+#         cell_nodes = mesh.coordinates.cell_node_map().values[cell_num, :]
+#         cells_coords[i, :, :] = mesh.coordinates.dat.data_ro[cell_nodes, :]
+    
+#     # Compute barycentric coordinates in current cells for all particles
+#     if isinstance(ref_cell, (UFCInterval, UFCTriangle, UFCTetrahedron)):
+#         # Simplex cells: direct barycentric computation
+#         bary_coords = ref_cell.compute_barycentric_coordinates(ref_coords_register)
+        
+#     elif isinstance(ref_cell, (UFCQuadrilateral, UFCHexahedron)):
+#         # Tensor-product cells: per-axis barycentric computation
+#         tp_cell = ref_cell.product
+#         axes = tp_cell.cells
+#         slices = tp_cell._split_slices([c.get_dimension() for c in axes])
+        
+#         bary_per_axis = []
+#         for axis, slice in zip(axes, slices):
+#             bary_per_axis.append(
+#                 axis.compute_barycentric_coordinates(ref_coords_register[:, slice])
+#             )
+#         bary_coords = np.hstack(bary_per_axis)
+#     else:
+#         raise NotImplementedError(
+#             f"Barycentric coordinate computation not implemented for {type(ref_cell)}"
+#         )
+    
+#     # Map to physical space
+#     phys_coords = np.einsum('in, ing->ig', bary_coords, cells_coords)
+    
+#     return phys_coords
 
 if __name__=='__main__':
     # Define the parent mesh
-    mesh = UnitSquareMesh(10, 10, quadrilateral=True)
+    mesh = UnitSquareMesh(10, 10, quadrilateral=False)
     # mesh = PeriodicUnitSquareMesh(10, 10)
 
     # Define the particles in a VOM
@@ -423,4 +479,4 @@ if __name__=='__main__':
 
     # Move particles in ref. space
     T_final = move_particles_in_ref_space(particle_vom, mesh, v, dt, T, t=0.0)
-    print("Final particle positions in physical space updated in ref space (in updated VOM order): ", particle_vom.coordinates.dat.data)
+    print("Final particle positions§: ", particle_vom.coordinates.dat.data)

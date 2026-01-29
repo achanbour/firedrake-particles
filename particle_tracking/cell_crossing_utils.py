@@ -102,8 +102,8 @@ def compute_ref_coords_in_new_cell(failed_global,
         )
 
         # Get the entity transform in the new cell allowing us to map facet-local coordinates to the new cell coordinates
+        # x_new_cell = A_new * x_facet + b_new
         new_transform = ref_cell.get_entity_transform(facet_dim, new_crossed_edge_id)
-
         new_ref_coords[l_pid] = new_transform(current_coord_on_facet)
 
     return new_ref_coords
@@ -114,20 +114,18 @@ def get_facet_coord(entity_transform, ref_coord, facet_dim, ref_cell):
     
     Given the entity transform affine map x_cell = A * x_facet + b, solve for x_facet.
     """
-    # Sample the transform at facet reference element vertices to recover A and b
+    # Apply the entity transform at facet vertices to recover A and b
     facet_ref_element = ref_cell.construct_subelement(facet_dim)
     facet_verts = np.array(facet_ref_element.get_vertices())
-    
-    # Apply entity transform on the facet vertices
     transformed = np.array([entity_transform(v) for v in facet_verts])
-    
-    # Solve for x_facet: ref_coord = A @ x_facet + b
-    # => x_facet = A^{-1} @ (ref_coord - b)
-    b = transformed[0]
+    b = transformed[0] 
     A = (transformed[1:] - b).T
-    
-    return np.linalg.lstsq(A, ref_coord - b, rcond=None)[0]
 
+    # NOTE: A is non-square (for 2D mesh, maps 1D edge coords to 2D cell coords)
+    # but since the particle is exactly on the facet, the project is exact
+    x_facet = np.linalg.lstsq(A, ref_coord - b, rcond=None)[0]
+    
+    return x_facet
 
 # def compute_ref_coords_in_new_cell(failed_global,
 #                                    parent_cells,
