@@ -85,7 +85,6 @@ def compute_ref_coords_in_new_cell(failed_global,
         plex_crossed_edge = mesh.topology.cell_closure[current_cell, num_vertices_per_cell + crossed_edge_id]
 
         # Find the local ID of the crossed edge in the new cell using the cone of the new cell
-        # reference cell entity numbering 
         new_cell_cone = plex.getCone(plex_new_cell)
         new_crossed_edge_id = None
         for l_eid, cone_point in enumerate(new_cell_cone):

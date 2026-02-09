@@ -12,22 +12,23 @@ point_coords = np.random.rand(N, 2)
 vom = VertexOnlyMesh(mesh, point_coords)
 
 # Inspect the permutation IS of the VOM.
-# This gives a re-ordering of the DMSwarm points based on parent mesh cell numbering
-# `_renumbering_entities` gets the parent mesh DMPlex renumbering, the parent cell IDs,
-# the inverse of the of the parent mesh renumbering (from current to old numbering), 
-# then sorts particles by their parent cell's original numbering
+# This gives a re-ordering of the DMSwarm points based on the parent mesh cell numbering
+# `_renumbering_entities` gets the parent mesh DMPlex renumbering (old numbering -> new numbering), the parent cell IDs,
+# and gets the inverse of the parent mesh renumbering (new numbering -> old numbering). 
+# It then sorts particles by their original DMPlex cell numbers.
 # This gives particles in original cell 0 first, then cell 1, then cell 2 ...
 
 # The reason for undoing the parent mesh renumbering is because it's inherently non-deterministic 
 # (due to hash randomization, MPI rank distribution etc.)
 # but we want a deterministic ordering of the VOM.
-# mesh partitioning (which rank owns which cells) and entity processing (marking as owned/halo)
+# mesh partitioning (which rank owns which cells) and entity processing (marking entities as owned/halo)
 # involve hash-based data structures (sets/dicts) where iteration order is non deterministic
 # different hash values -> different position in internal arrays -> different iteration order
 # -> different processing order -> different final entity numbering
 
 vom_perm_is = vom.topology._dm_renumbering
 parent_mesh_perm_is = vom._parent_mesh._dm_renumbering
+breakpoint()
 print(vom_perm_is.getIndices())
 print(parent_mesh_perm_is.getIndices())
 
