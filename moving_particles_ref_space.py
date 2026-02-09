@@ -70,11 +70,12 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
             trial_ref_pos_fn = advance_ref_coords_euler(ref_coords_fn, invJ_vom, v_fn, dt_trial_fn)
 
             # Compute barycentric coordinates at the old and new points
-            bary_old = ref_cell.compute_barycentric_coordinates(ref_coords_fn.dat.data_ro)
+            #  bary_old = ref_cell.compute_barycentric_coordinates(ref_coords_fn.dat.data_ro)
             bary_new = ref_cell.compute_barycentric_coordinates(trial_ref_pos_fn.dat.data_ro)
 
             # Split particles into passed/failed sets
-            passed_mask = np.array([is_inside_cell(bary, tol=1e-12) for bary in bary_new[active_indices]])
+            # passed_mask = np.array([is_inside_cell(bary, tol=1e-12) for bary in bary_new[active_indices]])
+            passed_mask = np.all(bary_new[active_indices] >= -1e-12, axis=1)
             failed_mask = ~passed_mask
 
             passed_local = np.where(passed_mask)[0] # local indices in the active set
@@ -83,56 +84,13 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
             failed_global = active_indices[failed_local]
 
             # Detect crossings for failed particles
-            t_cross = np.full(len(active_indices), np.nan)
-            bary_cross = np.full(len(active_indices), None, dtype=object)
-
-            use_bisection = True
-
-            # Option 1: Run an intersection-based algorithm
-            t_cross_linear = np.full(len(active_indices), np.nan)
-            bary_cross_linear = np.full(len(active_indices), None, dtype=object)
-
-            for local_i, global_i in zip(failed_local, failed_global):
-                t_cross_i, bary_cross_i = intersect_crossing_time(
-                    bary_old[global_i],
-                    bary_new[global_i],
-                    dt_left[global_i]
-                )
-                t_cross_linear[local_i] = t_cross_i
-                bary_cross_linear[local_i] = bary_cross_i
+            t_cross, bary_cross, X_cross = bisect_crossing_time_simd(ref_coords_fn, invJ_vom, v_fn, dt_left, ref_cell, failed_global, FS_vom)
             
-            # Option 2: Run boolean bisection
-            t_cross_bisect = np.full(len(active_indices), np.nan)
-            bary_cross_bisect = np.full(len(active_indices), None, dtype=object)
-
-            for local_i, global_i in zip(failed_local, failed_global):
-                t_cross_i, X_cross, bary_cross_i = bisect_crossing_time(
-                    ref_coords_fn.dat.data_ro[global_i],
-                    trial_ref_pos_fn.dat.data_ro[global_i],
-                    bary_old[global_i],
-                    bary_new[global_i],
-                    dt_left[global_i],
-                    ref_cell
-                )
-                t_cross_bisect[local_i] = t_cross_i
-                bary_cross_bisect[local_i] = bary_cross_i
-
-            # breakpoint()
-            # Check that both methods return the same crossing times and barycentric coordinates
-            if use_bisection:
-                t_cross = t_cross_bisect
-                bary_cross = bary_cross_bisect
-            else:
-                t_cross = t_cross_linear
-                bary_cross = bary_cross_linear
-            
-            # From the barycentric coords. at the crossing point, deduce which edge the particle crossed
+            # From the barycentric coords. at the crossing point, determine which edge the particle crossed
             crossed_edges = np.full(len(active_indices), None, dtype=object)
-            for local_i in failed_local:
-                crossed_edges[local_i] = int(np.argmin(np.abs(bary_cross[local_i])))
+            for idx, local_i in enumerate(failed_local):
+                crossed_edges[local_i] = int(np.argmin(np.abs(bary_cross[idx])))
             
-            # breakpoint()
-            # Check crossed edges
             """
             Process passed and failed particles.
 
@@ -163,14 +121,8 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
 
             # Failed particles
             if len(failed_global) > 0:
-                # Compute particle positions at the crossing facet
-                # This is done by running the integrator with time step = t_cross 
-                crossing_dt_fn = Function(FS_vom)
-                crossing_dt_fn.dat.data[failed_global] = t_cross[failed_local]
-                ref_step_fn = advance_ref_coords_euler(ref_coords_fn, invJ_vom, v_fn, crossing_dt_fn)
-
-                dt_left[failed_global] -= t_cross[failed_local]
-                ref_coords_register[failed_global] = ref_step_fn.dat.data_ro[failed_global]
+                dt_left[failed_global] -= t_cross
+                ref_coords_register[failed_global] = X_cross
 
                 print("Failed set info:")
                 print(f"  dt_left: {dt_left[failed_global]}")
@@ -237,7 +189,6 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
         # Rebuild the VOM given the updated particle positions
         # NOTE: Physical coordinates can be obtained from reference coordinates by interpolating the parent mesh into the VOM
         # Interpolation makes use of the parent cell ownership information and reference coordinates of VOM points
-        # new_phys_coords = compute_phys_coords_from_ref_coords(ref_coords_register, pmesh.topology.cell_parent_cell_list, mesh, ref_cell)
         new_phys_coords = assemble(interpolate(SpatialCoordinate(mesh), pmesh.coordinates.function_space()))
         pmesh_updater.rebuild_vom(absorbed_vom_indices=boundary_particles, new_coords=new_phys_coords.dat.data_ro)
 
@@ -247,12 +198,12 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
 
 def advance_ref_coords_euler(ref_pos_fn, invJ_vom, v_fn, dt_fn):
     """
-    Advance particle forward by one Euler step in reference space.
+    Advance particles forward by one Euler step in reference space.
 
     X(t + dt) = X(t) + J^-1*v*dt
 
     To distinguish between active and inactive particles within the inner loop,
-    pass dt_fn as a scalar DG0 Function storing per-particle time steps.
+    pass dt_fn as a DG0 Function storing per-particle time steps.
     """
     # Mesh consistency checks
     m = ref_pos_fn.function_space().mesh()
@@ -264,101 +215,64 @@ def advance_ref_coords_euler(ref_pos_fn, invJ_vom, v_fn, dt_fn):
     new_ref_pos_fn = assemble(interpolate(update_expr, ref_pos_fn.function_space()))
     return new_ref_pos_fn
 
-def intersect_crossing_time(bary0, bary1, dt, tol=1e-12):
-    """
-    Detect the facet crossed and the crossing time for a single particle, assuming a linear barycentric trajectory over [0, dt].
-    This works for linear particle trajectories and affine meshes
-    """
-
-    n_coords = len(bary0)
-    dlambda = (bary1 - bary0) / dt
-
-    t_out = dt
-    exit_coord = None
-
-    # Preconditions
-    assert is_inside_cell(bary0, tol=tol) # old point lies inside the cell
-    assert not is_inside_cell(bary1, tol=tol) # new point lies outside the cell
-
-    for j in range(n_coords):
-        if abs(dlambda[j]) < tol:
-            # Constant barycentric coordinate
-            if bary0[j] < -tol:
-                raise RuntimeError(
-                    "Particle starts outside cell in linear crossing detection."
-                )
-            continue
-
-        # Time when lambda_j(t) = 0
-        t_zero = -bary0[j] / dlambda[j]
-
-        # Only decreasing coordinates can cause exit
-        if dlambda[j] < 0 and -tol <= t_zero <= t_out + tol:
-            if t_zero < t_out:
-                t_out = t_zero
-                exit_coord = j
-
-    if exit_coord is None or t_out < -tol or t_out > dt + tol:
-        raise RuntimeError(
-            "Linear crossing detection failed: no valid exit found."
-        )
+def bisect_crossing_time_simd(
+        ref_coords_fn,
+        invJ_vom,
+        v_fn,
+        dt_left,
+        ref_cell, 
+        failed_global,
+        FS_vom,
+        tol=1e-12,
+        max_iters=30
+):
+    """SIMD-style bisection algorithm that detects particle crossings.
     
-    t_cross = max(0.0, min(t_out, dt))
-    bary_cross = bary0 + t_cross * dlambda
+    Instead of reconstructing midpoints using a linear interpolation (as given by `X_at_t`),
+    this function evaluates midpoint positions by rerunning the integrator.
 
-    return t_cross, bary_cross
-        
-# New: implement bisection to detect crossed edge and crossing time
-def is_inside_cell(bary, tol):
-    """Boolean predicate: is particle inside the cell?"""
-    return np.all(bary >= -tol)
-
-def X_at_t(X0, X1, t, dt):
+    Returns crossing times and reference coordinates at the crossing point for failed particles.
     """
-    This function returns the reference coordinates of a single particle
-    within a single forward Euler update step.
+    n_failed = len(failed_global)
 
-    NOTE: for an arbitrary integrator, this needs to be replaced by calling the integrator directly.
-    calling `advance_ref_coords_euler` is expensive and it's a global operation involving the whole VOM.
-    """
-    return X0 + (t / dt) * (X1 - X0)
+    # Per particle bisection brakets [t_lo, t_hi]
+    t_lo = np.zeros(n_failed, dtype=float)
+    t_hi = dt_left[failed_global].copy()
 
-# TODO: Rewrite bisection as a SIMD operation over the entire set of points
-def bisect_crossing_time(X0, X1, bary0, bary1, dt, ref_cell, tol=1e-12, max_iters=30):
-    """Per particle boolean bisection.
-    
-    Search for the last index the particle satisfies the boolean predicate `is_inside_cell`.
-    """
-
-    # Preconditions
-    assert is_inside_cell(bary0, tol=tol) # old point lies inside the cell
-    assert not is_inside_cell(bary1, tol=tol) # new point lies outside the cell
-
-    t_lo = 0.0
-    t_hi = dt
+    # Define a reusable DG0 timestep Function
+    dt_mid_fn = Function(FS_vom)
 
     for _ in range(max_iters):
         t_mid = (t_lo + t_hi) / 2
-        X_mid = X_at_t(X0, X1, t_mid, dt)
+        dt_mid_fn.dat.data[failed_global] = t_mid
 
+        # Advance only failed particles by mid-time substep
+        mid_ref_fn = advance_ref_coords_euler(ref_coords_fn, invJ_vom, v_fn, dt_mid_fn)
+        X_mid = mid_ref_fn.dat.data[failed_global]
         bary_mid = ref_cell.compute_barycentric_coordinates(X_mid)
-
-        # Break if the particle hits a boundary
-        if np.any(np.abs(bary_mid) < tol):
-            t_lo = t_mid
+        inside = np.all(bary_mid >= -tol, axis = 1)
+        
+        # Update brackets
+        # For particles inside at the midpoint, advance lower end
+        t_lo[inside] = t_mid[inside]
+        # For particels outside at the midpoing, advance higher end
+        t_hi[~inside] = t_mid[~inside]
+        
+        # Exit of all brackets shrink sufficiently
+        if np.max(t_hi - t_lo) < tol:
             break
-
-        # Evaluate predicate at the midpoint and update the range
-        if is_inside_cell(bary_mid, tol):
-            t_lo = t_mid
-        else:
-            t_hi = t_mid
     
+    # Extract crossing times
     t_cross = t_lo
-    X_cross = X_at_t(X0, X1, t_cross, dt)
+
+    # Compute barycentric coordinates at the crossing point
+    dt_cross_fn = Function(FS_vom)
+    dt_cross_fn.dat.data[failed_global] = t_cross
+    cross_ref_fn = advance_ref_coords_euler(ref_coords_fn, invJ_vom, v_fn, dt_cross_fn)
+    X_cross = cross_ref_fn.dat.data_ro[failed_global]
     bary_cross = ref_cell.compute_barycentric_coordinates(X_cross)
 
-    return t_cross, X_cross, bary_cross
+    return t_cross, bary_cross, X_cross
 
 if __name__=='__main__':
     # Define the parent mesh

@@ -1,7 +1,7 @@
 from firedrake import *
 import numpy as np
 from update_vom import VertexOnlyMeshUpdater
-from non_interacting_particles_phys import move_particles_in_phys_space
+from moving_particles_phys_space import move_particles_in_phys_space
 from ufl.differentiation import ReferenceGrad
 
 np.random.seed(42)
