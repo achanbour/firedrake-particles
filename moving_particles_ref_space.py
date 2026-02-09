@@ -228,8 +228,8 @@ def bisect_crossing_time_simd(
 ):
     """SIMD-style bisection algorithm that detects particle crossings.
     
-    Instead of reconstructing midpoints using a linear interpolation (as given by `X_at_t`),
-    this function evaluates midpoint positions by rerunning the integrator.
+    Instead of reconstructing midpoints using a hard-coded linear interpolation,
+    this function evaluates midpoint positions by re-running the integrator.
 
     Returns crossing times and reference coordinates at the crossing point for failed particles.
     """
@@ -239,26 +239,25 @@ def bisect_crossing_time_simd(
     t_lo = np.zeros(n_failed, dtype=float)
     t_hi = dt_left[failed_global].copy()
 
-    # Define a reusable DG0 timestep Function
+    # Define a DG0 timestep Function
     dt_mid_fn = Function(FS_vom)
 
     for _ in range(max_iters):
         t_mid = (t_lo + t_hi) / 2
         dt_mid_fn.dat.data[failed_global] = t_mid
 
-        # Advance only failed particles by mid-time substep
+        # Advance only failed particles by mid time substep
         mid_ref_fn = advance_ref_coords_euler(ref_coords_fn, invJ_vom, v_fn, dt_mid_fn)
         X_mid = mid_ref_fn.dat.data[failed_global]
         bary_mid = ref_cell.compute_barycentric_coordinates(X_mid)
         inside = np.all(bary_mid >= -tol, axis = 1)
         
-        # Update brackets
-        # For particles inside at the midpoint, advance lower end
+        # For particles inside at the midpoint, advance lower end of the bracket
         t_lo[inside] = t_mid[inside]
-        # For particels outside at the midpoing, advance higher end
+        # For particels outside at the midpoing, advance higher end of the bracket
         t_hi[~inside] = t_mid[~inside]
         
-        # Exit of all brackets shrink sufficiently
+        # Early exit if all brackets shrink sufficiently
         if np.max(t_hi - t_lo) < tol:
             break
     
