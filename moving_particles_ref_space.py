@@ -23,7 +23,6 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
     x = SpatialCoordinate(mesh)
     invJ_expr = inv(ReferenceGrad(x))
     ref_cell = mesh.coordinates.function_space().finat_element.cell
-    ref_cell_edges = ref_cell.get_topology()[1]
 
     pmesh_updater = VertexOnlyMeshUpdater(pmesh, mesh)
 
@@ -31,9 +30,7 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
         TFS_vom = TensorFunctionSpace(pmesh, "DG", 0) # Tensor FS for the Jacobian inverse
         invJ_vom = Function(TFS_vom)  
         FS_vom = FunctionSpace(pmesh, "DG", 0) # Scalar FS for per-particle time steps
-
-        # Get the current reference coordinates
-        ref_coords_fn = pmesh.reference_coordinates
+        ref_coords_fn = pmesh.reference_coordinates # current reference coordinates
 
         boundary_particles = [] # list to keep track of particles that hit the domain boundary
 
@@ -138,7 +135,23 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
 
                     next_cell = find_next_cell(mesh, parent_cell, crossed_edge_id)
 
-                    if next_cell is None:
+                    """
+                    # Convert FIAT facet ID to DMPlex facet point
+                    facet_point = mesh.topology.cell_closure[parent_cell][mesh.ufl_cell().num_vertices + crossed_edge_id]
+
+                    # Find local facet index in cone ordering
+                    plex_cell = mesh.topology.cell_closure[parent_cell, -1]
+                    cone = mesh.topology_dm.getCone(plex_cell)
+                    local_facet = None
+                    for lf, pt in enumerate(cone):
+                        if pt == facet_point:
+                            local_facet = lf
+                            break
+                    
+                    next_cell = cell_neighbours[parent_cell, local_facet]
+                    """
+
+                    if next_cell is None or next_cell == -1:
                         # Exterior boundary hit
                         new_parent_cells[global_i] = parent_cell
                         boundary_particles.append(global_i)
@@ -147,10 +160,21 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
                     else:
                         new_parent_cells[global_i] = next_cell
 
+                    """
+                    # Apply cached transform to get coords in neighbour cell
+                    T = transforms[parent_cell, local_facet, :, :gdim, 0]
+                    b = transforms[parent_cell, local_facet, :, gdim, 0]
+
+                    X_new = T @ ref_coords_register[global_i] + b
+
+                    # Store updated coords
+                    ref_coords_register[global_i] = X_new
+                    """
+
                 # Compute reference coordinates in the new parent cells
                 # TODO: Remove this step by pre-computing the coordinate transforms for all pairs of cells
                 # For each cell, precompute neighbouring cell store in an integer field of size num_facets
-                # pre compute coordinate transforms (A,b) in a matrix field
+                # pre compute coordinate transforms (A,b) and store in a matrix field
                 new_ref_coords_in_new_cells = compute_ref_coords_in_new_cell(
                     failed_global,
                     parent_cells,
@@ -275,7 +299,7 @@ def bisect_crossing_time_simd(
 
 if __name__=='__main__':
     # Define the parent mesh
-    mesh = UnitSquareMesh(10, 10, quadrilateral=False)
+    mesh = UnitSquareMesh(10, 10, quadrilateral=True)
     # mesh = PeriodicUnitSquareMesh(10, 10)
 
     # Define the particles in a VOM
