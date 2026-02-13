@@ -86,7 +86,7 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
             # From the barycentric coords. at the crossing point, determine which edge the particle crossed
             crossed_edges = np.full(len(active_indices), None, dtype=object)
             for idx, local_i in enumerate(failed_local):
-                crossed_edges[local_i] = int(np.argmin(np.abs(bary_cross[idx])))
+                crossed_edges[local_i] = int(np.argmin(abs(bary_cross[idx])))
             
             """
             Process passed and failed particles.
