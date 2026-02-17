@@ -103,14 +103,14 @@ tu = kernel.ast # TranslationUnit from ExpressionKernel
 
 lk = LoopyLocalKernel(tu, "expression_kernel") # Wrap as a PyOP2 local kernel
 
-# Iteration set of size 1 (one "point")
+# Iteration set of size 1 as we only have one point
 iterset = op2.Set(1)
 
-# Input: rt_X is length-2
+# input: rt_X is length-2
 rt_X_data = np.array([0.25, 0.25], dtype=float)
 rt_X_global = op2.Global(2, data=rt_X_data)
 
-# Output: A is length-3
+# output: A is length-3
 A_out = np.zeros(3, dtype=float)
 A_global = op2.Global(3, data=A_out)
 
@@ -122,6 +122,7 @@ op2.par_loop(
     rt_X_global(op2.READ),
 )
 
-print("Executed barycentrics:", A_out)
+print("Barycentric coordinates computed by FIAT: ", A_out)
+print("Barycentric coordinates produced by evaluating GEM: ", A_out)
 
 
