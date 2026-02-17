@@ -299,7 +299,7 @@ def bisect_crossing_time_simd(
 
 if __name__=='__main__':
     # Define the parent mesh
-    mesh = UnitSquareMesh(10, 10, quadrilateral=True)
+    mesh = UnitSquareMesh(10, 10, quadrilateral=False)
     # mesh = PeriodicUnitSquareMesh(10, 10)
 
     # Define the particles in a VOM
