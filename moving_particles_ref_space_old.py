@@ -86,11 +86,11 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
                 t_cross, bary_cross, X_cross = bisect_crossing_time_simd(ref_coords_fn, invJ_vom, v_fn, dt_left, ref_cell, failed_global, FS_vom)
             
                 # From the barycentric coords. at the crossing point, determine which edge the particle crossed
-                local_crossed_edge_ids = np.full(len(active_indices), None, dtype=object)
+                crossed_edges = np.full(len(active_indices), None, dtype=object)
                 for idx, local_i in enumerate(failed_local):
-                    local_crossed_edge_ids[local_i] = int(np.argmin(abs(bary_cross[idx])))
+                    crossed_edges[local_i] = int(np.argmin(abs(bary_cross[idx])))
 
-                    # Catch the degenerate case when a particle lands on a vertex
+                    # Catch degenerate case when a particle lands on a vertex
                     # Two barycentric coords are 0 so argmin is ambiguous
                     eps = 1e-12
                     near_zero = abs(bary_cross[idx]) < eps
@@ -120,6 +120,7 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
             print(f"  Failed set: {failed_global}")
             print(f"  Passed set: {passed_global}")
 
+            # Process passed and failed particles separately
             # Passed particles
             if len(passed_global) > 0:
                 dt_left[passed_global] = 0
@@ -132,32 +133,37 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
             # Failed particles
             if len(failed_global) > 0:
                 dt_left[failed_global] -= t_cross
+                ref_coords_register[failed_global] = X_cross
+
                 print("Failed set info:")
                 print(f"  dt_left: {dt_left[failed_global]}")
-                print(f"  new ref coords (in current cell): {X_cross}")
+                print(f"  new ref coords (in current cell): {ref_coords_register[failed_global]}")
 
-                """
-                For failed particles,
-                1. First, identify which cell to go to next
-                2. Second, derive reference coordinates in that new cell.
-                """
+                # Identify the next cells to move the particles to given the crossed facets
                 parent_cells = pmesh.topology.cell_parent_cell_list # parent cell ID for each point in VOM order
                 new_parent_cells = parent_cells.copy()
 
-                for j, global_i in enumerate(failed_global):
-                    # NOTE:
-                    # j indexes into the set of failed particles
-                    # failed_local[j] gives the index of that particle within the active set
-                    # global_i gives the index of that particle in the full set of particles
-
-                    # TODO: Pre-compute cell neighbours and coordinate transforms on the mesh.
-                    # Stop rediscovering the topology and recomputing coordinate transforms every time.
-                    # Instead, replace by a lookup into the cached mesh metadata.
+                for local_i, global_i in zip(failed_local, failed_global):
                     parent_cell = parent_cells[global_i, 0]
-                    local_crossed_edge_id = local_crossed_edge_ids[failed_local[j]]
+                    crossed_edge_id = crossed_edges[local_i]
 
-                    # next_cell = find_next_cell(mesh, parent_cell, crossed_edge_id)
-                    next_cell = mesh.topology.cell_facet_neighbours.data[parent_cell, local_crossed_edge_id]
+                    next_cell = find_next_cell(mesh, parent_cell, crossed_edge_id)
+
+                    """
+                    # Convert FIAT facet ID to DMPlex facet point
+                    facet_point = mesh.topology.cell_closure[parent_cell][mesh.ufl_cell().num_vertices + crossed_edge_id]
+
+                    # Find local facet index in cone ordering
+                    plex_cell = mesh.topology.cell_closure[parent_cell, -1]
+                    cone = mesh.topology_dm.getCone(plex_cell)
+                    local_facet = None
+                    for lf, pt in enumerate(cone):
+                        if pt == facet_point:
+                            local_facet = lf
+                            break
+                    
+                    next_cell = cell_neighbours[parent_cell, local_facet]
+                    """
 
                     if next_cell is None or next_cell == -1:
                         # Exterior boundary hit
@@ -167,21 +173,32 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
                         warnings.warn(f"Particle {global_i} attempted to cross an exterior boundary facet from cell {parent_cell}")
                     else:
                         new_parent_cells[global_i] = next_cell
-                    
-                    A_facet_coord_transform, b_facet_coord_transform = mesh.topology.cell_facet_coord_transforms
-                    ref_coords_register[global_i] = A_facet_coord_transform.data[parent_cell, local_crossed_edge_id] @ X_cross[j] + b_facet_coord_transform.data[parent_cell, local_crossed_edge_id]
 
-                # new_ref_coords_in_new_cells = compute_ref_coords_in_new_cell(
-                #     failed_global,
-                #     parent_cells,
-                #     new_parent_cells,
-                #     local_crossed_edge_ids[failed_local],
-                #     ref_coords_register,
-                #     mesh,
-                #     ref_cell
-                # )
-                # ref_coords_register[failed_global] = new_ref_coords_in_new_cells
+                    """
+                    # Apply cached transform to get coords in neighbour cell
+                    T = transforms[parent_cell, local_facet, :, :gdim, 0]
+                    b = transforms[parent_cell, local_facet, :, gdim, 0]
 
+                    X_new = T @ ref_coords_register[global_i] + b
+
+                    # Store updated coords
+                    ref_coords_register[global_i] = X_new
+                    """
+
+                # Compute reference coordinates in the new parent cells
+                # TODO: Remove this step by pre-computing the coordinate transforms for all pairs of cells
+                # For each cell, precompute neighbouring cell store in an integer field of size num_facets
+                # pre compute coordinate transforms (A,b) and store in a matrix field
+                new_ref_coords_in_new_cells = compute_ref_coords_in_new_cell(
+                    failed_global,
+                    parent_cells,
+                    new_parent_cells,
+                    crossed_edges[failed_local],
+                    ref_coords_register,
+                    mesh,
+                    ref_cell
+                )
+                ref_coords_register[failed_global] = new_ref_coords_in_new_cells
                 print(f"  new ref coords (in next cells): {ref_coords_register[failed_global]}")
             
             # breakpoint()
@@ -192,7 +209,7 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
 
             # - recompute inverse Jacobian using new parent cell ownership (done at start of inner loop)
             # 5) Re-enter the inner loop with new ref. coords., parent cells and remaining dt_left
-
+        
         print()
         print("=" * 60)
         print("End of time step summary")
