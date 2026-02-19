@@ -1,1 +1,1 @@
-Experimental code for implementing basic particle tracking in Firedrake.
+Development repository dedicated to the implementation of particle tracking capabilities in Firedrake.
