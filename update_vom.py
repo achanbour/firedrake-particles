@@ -58,8 +58,9 @@ class VertexOnlyMeshUpdater:
     def update_ref_view(self, next_parent_cells, new_refcoords):
         """Perform a reference-only VOM update.
 
-        Updates the parent cell ownership and reference coordinates only assuming that the new pair 
-        (parent cell, ref coords) is geometrically correct.
+        Updates the parent cell ownership and reference coordinates under the assumption that
+        (next_parent_cells, new_refcoords) are geometrically consistent 
+        i.e., ref_coords correctly represents each point's reference coordinates in its new parent cell.
         """
         swarm = self.vom.topology_dm
         vom_to_swarm = self.vom.cell_closure[:, -1] # VOM cell ID -> DMSwarm point ID
