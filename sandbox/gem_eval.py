@@ -37,9 +37,11 @@ def evaluate_gem(gem_expr, rt_point):
     # Infer other kernel arguments from the dependencies of the GEM evaluation expression tree (e.g., rt_X)
     kernel_builder.register_requirements([evaluation_expr])
 
-    # Build the kernel (wraps a Loopy TranslationUnit)
+    # Build the kernel
     kernel = kernel_builder.construct_kernel(impero_c, {}, False, False)
-
+    
+    # The TSFC ExpressionKernel wraps a Loopy TranslationUnit (kernel IR)
+    # It is the ultimate input (after all the pre-processing is done) to the compiler that generates a single object file
     # import loopy 
     # ccode = loopy.generate_code_v2(kernel.ast) # string of generated C code 
 
@@ -59,13 +61,18 @@ def evaluate_gem(gem_expr, rt_point):
     from pyop2 import op2
     from pyop2.local_kernel import LoopyLocalKernel
 
-    tu = kernel.ast # Loopy TranslationUnit (kernel IR)
-    lk = LoopyLocalKernel(tu, "expression_kernel") # runtime wrapper of the kernel IR (specifies the entrypoint kernel)
+    tu = kernel.ast
+
+    # LoopyLocalKernel is a a PyOP2 structure
+    # It attaches PyOP2 concepts (defined globally) to the Loopy kernel (that operates locally)
+    lk = LoopyLocalKernel(tu, "expression_kernel")
 
     # Define an iteration set of size 1 as we only have one point
     iterset = op2.Set(1)
 
     # Provide a concrete runtime input point
+    # NOTE: op2.Global is a flat vector of length dim so dim must be equal to the number of scalar entries in data
+    # NOTE: in this simple case, global and local are isomorphic so we can define op2.Dat with an identity mapping
     rt_point = np.asarray(rt_point)
     rt_X_global = op2.Global(rt_point.size, data=rt_point)
 
@@ -73,14 +80,40 @@ def evaluate_gem(gem_expr, rt_point):
     A_out = np.zeros(3, dtype=float)
     A_global = op2.Global(3, data=A_out)
     
-    # Execute the kernel
-    # JIT compiles the executable kernel into a shared library
-    # loading this shared library produces a pointer to a callable C function
-    # this function then gets called in a par_loop (only once here)
+
+    # Execute the kernel in a PyOP2 parallel loop (par_loop)
     op2.par_loop(
         lk,
         iterset,
         A_global(op2.INC), # increment access (kernel computes increments to be summed into a global output object)
         rt_X_global(op2.READ), # read-only access
     )
+
+    # NOTE: The execution steps are:
+    # PyOP2 JIT compiles the executable kernel into a shared library,
+    # then loading this shared library in Python produces a pointer to a callable C function,
+    # this function then gets called in a par_loop (only once here) with pointers to the global arrays/Dats as arguments
+
+    # NOTE: When assembling operators of forms,  
+
     return A_out
+
+"""
+# rt_point.point_size gives the total number of coordinate scalars
+
+# Single point vector
+rt_point = np.array([0.25, 0.25])
+rt_point.shape == (2,)
+rt_point.size == 2
+
+# Single point in a tensor storing a batch of points
+rt_point = np.array([[0.25, 0.25]])
+rt_point.shape == (1,2)
+rt_point.size == 2
+
+# Multiple points in a tensor storing a batch of points
+rt_point = np.array([[0.1,0.2],
+                     [0.3,0.4]])
+rt_point.shape == (2,2)
+rt_point.size == 4
+"""

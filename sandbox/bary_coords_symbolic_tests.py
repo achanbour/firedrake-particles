@@ -83,8 +83,9 @@ print("Barycentric coords computed by FIAT (triangle):", bary_coords_vals)
 # -- GEM is TSFC's IR so we evaluate the GEM expression by compiling/executing a TSFC kernel
 bary_gem_expr = ref_element.barycentric_coordinates(single_point_vec)
 
-# NOTE: Doesn't work for quads since the FInAt element is a `FlattenedDimensions` object
-# which is not a FiatElement.
+# NOTE: Doesn't work for quads since the FInAt element is a `FlattenedDimensions`
+# which is not a FiatElement. A possible solution to make this work is to implement a barycentric_coordinates() method
+# in the FlattenedDimensions class
 # bary_gem_expr_quad = ref_element_quad.barycentric_coordinates(single_point_vec)
 
 from gem_eval import evaluate_gem
