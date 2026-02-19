@@ -73,10 +73,12 @@ def compute_ref_coords_in_new_cell(failed_global,
 
     plex = mesh.topology_dm
     num_vertices_per_cell = mesh.ufl_cell().num_vertices
+    num_facets_per_cell = mesh.ufl_cell().num_facets
 
     for l_pid, g_pid in enumerate(failed_global):
         current_cell = parent_cells[g_pid, 0]
         new_cell = new_parent_cells[g_pid, 0]
+
         crossed_edge_id = crossed_edges[l_pid] 
         current_coord = ref_coords[g_pid]
 
@@ -85,11 +87,14 @@ def compute_ref_coords_in_new_cell(failed_global,
         plex_crossed_edge = mesh.topology.cell_closure[current_cell, num_vertices_per_cell + crossed_edge_id]
 
         # Find the local ID of the crossed edge in the new cell using the cone of the new cell
-        new_cell_cone = plex.getCone(plex_new_cell)
-        new_crossed_edge_id = None
-        for l_eid, cone_point in enumerate(new_cell_cone):
-            if cone_point == plex_crossed_edge:
-                new_crossed_edge_id = l_eid 
+        # new_cell_cone = plex.getCone(plex_new_cell)
+        # new_crossed_edge_id = None
+        # for l_eid, cone_point in enumerate(new_cell_cone):
+        #     if cone_point == plex_crossed_edge:
+        #         new_crossed_edge_id = l_eid
+
+        new_cell_facet_points = mesh.topology.cell_closure[new_cell, num_vertices_per_cell:num_vertices_per_cell+num_facets_per_cell]
+        lf_new = np.argwhere(new_cell_facet_points == plex_crossed_edge)[0,0]
 
         # Invert the entity transform to get facet-local coordinates from the current cell coordinates
         current_transform = ref_cell.get_entity_transform(facet_dim, crossed_edge_id)
@@ -102,7 +107,12 @@ def compute_ref_coords_in_new_cell(failed_global,
 
         # Get the entity transform in the new cell allowing us to map facet-local coordinates to the new cell coordinates
         # x_new_cell = A_new * x_facet + b_new
-        new_transform = ref_cell.get_entity_transform(facet_dim, new_crossed_edge_id)
+
+        # NOTE: The below code is likely wrong since `new_crossed_edge_id` derived above is not FIAT's local facet ID in the new cell
+        # but instead the position of this facet in the plex cone order.
+        # new_transform = ref_cell.get_entity_transform(facet_dim, new_crossed_edge_id)
+
+        new_transform = ref_cell.get_entity_transform(facet_dim, lf_new)
         new_ref_coords[l_pid] = new_transform(current_coord_on_facet)
 
     return new_ref_coords
