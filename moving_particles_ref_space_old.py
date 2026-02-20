@@ -80,28 +80,7 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
             failed_local = np.where(failed_mask)[0]
             passed_global = active_indices[passed_local] # global indices in the full particle set
             failed_global = active_indices[failed_local]
-
-            # Detect crossings for failed particles
-            if len(failed_global) > 0:
-                t_cross, bary_cross, X_cross = bisect_crossing_time_simd(ref_coords_fn, invJ_vom, v_fn, dt_left, ref_cell, failed_global, FS_vom)
-            
-                # From the barycentric coords. at the crossing point, determine which edge the particle crossed
-                crossed_edges = np.full(len(active_indices), None, dtype=object)
-                for idx, local_i in enumerate(failed_local):
-                    crossed_edges[local_i] = int(np.argmin(abs(bary_cross[idx])))
-
-                    # Catch degenerate case when a particle lands on a vertex
-                    # Two barycentric coords are 0 so argmin is ambiguous
-                    eps = 1e-12
-                    near_zero = abs(bary_cross[idx]) < eps
-                    if np.count_nonzero(near_zero) >= 2:
-                        warnings.warn(
-                            f"Degenerate crossing: particle landed on a vertex.\n"
-                            f"bary_cross = {bary_cross[idx]}\n"
-                            f"failed_global particle = {failed_global[idx]}"
-                        )
-                        breakpoint()
-
+                
             """
             Process passed and failed particles.
 
@@ -120,7 +99,6 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
             print(f"  Failed set: {failed_global}")
             print(f"  Passed set: {passed_global}")
 
-            # Process passed and failed particles separately
             # Passed particles
             if len(passed_global) > 0:
                 dt_left[passed_global] = 0
@@ -132,12 +110,37 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
 
             # Failed particles
             if len(failed_global) > 0:
-                dt_left[failed_global] -= t_cross
-                ref_coords_register[failed_global] = X_cross
-
+                """
+                For failed particles,
+                1. Identify the crossed facet using barycentric coordinates
+                2. Determine which cell to go to next
+                2. Compute reference coordinates in the new cell.
+                """
+                t_cross, bary_cross, X_cross = bisect_crossing_time_simd(ref_coords_fn, invJ_vom, v_fn, dt_left, ref_cell, failed_global, FS_vom)
+            
                 print("Failed set info:")
                 print(f"  dt_left: {dt_left[failed_global]}")
                 print(f"  new ref coords (in current cell): {ref_coords_register[failed_global]}")
+            
+                # From the barycentric coords. at the crossing point, determine which edge the particle crossed
+                crossed_edges = np.full(len(active_indices), None, dtype=object)
+                for idx, local_i in enumerate(failed_local):
+                    crossed_edges[local_i] = int(np.argmin(abs(bary_cross[idx])))
+
+                    # Catch degenerate case when a particle lands on a vertex
+                    # Two barycentric coords are 0 so argmin is ambiguous
+                    eps = 1e-12
+                    near_zero = abs(bary_cross[idx]) < eps
+                    if np.count_nonzero(near_zero) >= 2:
+                        warnings.warn(
+                            f"Degenerate crossing: particle landed on a vertex.\n"
+                            f"bary_cross = {bary_cross[idx]}\n"
+                            f"failed_global particle = {failed_global[idx]}"
+                        )
+                        breakpoint()
+
+                dt_left[failed_global] -= t_cross
+                ref_coords_register[failed_global] = X_cross
 
                 # Identify the next cells to move the particles to given the crossed facets
                 parent_cells = pmesh.topology.cell_parent_cell_list # parent cell ID for each point in VOM order
@@ -149,22 +152,6 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
 
                     next_cell = find_next_cell(mesh, parent_cell, crossed_edge_id)
 
-                    """
-                    # Convert FIAT facet ID to DMPlex facet point
-                    facet_point = mesh.topology.cell_closure[parent_cell][mesh.ufl_cell().num_vertices + crossed_edge_id]
-
-                    # Find local facet index in cone ordering
-                    plex_cell = mesh.topology.cell_closure[parent_cell, -1]
-                    cone = mesh.topology_dm.getCone(plex_cell)
-                    local_facet = None
-                    for lf, pt in enumerate(cone):
-                        if pt == facet_point:
-                            local_facet = lf
-                            break
-                    
-                    next_cell = cell_neighbours[parent_cell, local_facet]
-                    """
-
                     if next_cell is None or next_cell == -1:
                         # Exterior boundary hit
                         new_parent_cells[global_i] = parent_cell
@@ -173,17 +160,6 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
                         warnings.warn(f"Particle {global_i} attempted to cross an exterior boundary facet from cell {parent_cell}")
                     else:
                         new_parent_cells[global_i] = next_cell
-
-                    """
-                    # Apply cached transform to get coords in neighbour cell
-                    T = transforms[parent_cell, local_facet, :, :gdim, 0]
-                    b = transforms[parent_cell, local_facet, :, gdim, 0]
-
-                    X_new = T @ ref_coords_register[global_i] + b
-
-                    # Store updated coords
-                    ref_coords_register[global_i] = X_new
-                    """
 
                 # Compute reference coordinates in the new parent cells
                 # TODO: Remove this step by pre-computing the coordinate transforms for all pairs of cells

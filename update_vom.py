@@ -561,9 +561,14 @@ class VertexOnlyMeshUpdater:
         # --Increment VOM version number--
         # Introduce a `._version` attribute on a MeshGeometry object
         # TODO: this has to be a collective operation
+        # self.vom._topology_version += 1
+
+        if not hasattr(self.vom, "_topology_version"):
+            self.vom._topology_version = 0
         self.vom._topology_version += 1
 
-        # Initialize the dictionary that stores the one-step SFs lazily, i.e., the first time the VOM gets rebuilt.
+        # Initialize the dictionary that stores the one-step SFs 
+        # This is done lazily, i.e., the first time the VOM gets rebuilt.
         if not hasattr(self.vom, "_topology_step_sfs"):
             self.vom._topology_step_sfs = {}
         
