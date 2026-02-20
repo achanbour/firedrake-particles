@@ -1,10 +1,10 @@
 from firedrake import *
+from firedrake.petsc import PETSc
+from ufl.differentiation import ReferenceGrad
 import numpy as np
 import warnings
 from update_vom import VertexOnlyMeshUpdater
 from particle_tracking.cell_crossing_utils import find_next_cell, compute_ref_coords_in_new_cell
-from ufl.differentiation import ReferenceGrad
-from FIAT.reference_element import UFCInterval, UFCQuadrilateral, UFCTriangle, UFCHexahedron, UFCTetrahedron
 
 np.random.seed(42)
 
@@ -117,7 +117,9 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
                 2. Compute reference coordinates in the new cell.
                 """
                 t_cross, bary_cross, X_cross = bisect_crossing_time_simd(ref_coords_fn, invJ_vom, v_fn, dt_left, ref_cell, failed_global, FS_vom)
-            
+                dt_left[failed_global] -= t_cross
+                ref_coords_register[failed_global] = X_cross
+
                 print("Failed set info:")
                 print(f"  dt_left: {dt_left[failed_global]}")
                 print(f"  new ref coords (in current cell): {ref_coords_register[failed_global]}")
@@ -139,43 +141,41 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
                         )
                         breakpoint()
 
-                dt_left[failed_global] -= t_cross
-                ref_coords_register[failed_global] = X_cross
-
                 # Identify the next cells to move the particles to given the crossed facets
                 parent_cells = pmesh.topology.cell_parent_cell_list # parent cell ID for each point in VOM order
                 new_parent_cells = parent_cells.copy()
+                
+                with PETSc.Log.Event("ComputeCellTransitions"):
+                    for local_i, global_i in zip(failed_local, failed_global):
+                        parent_cell = parent_cells[global_i, 0]
+                        crossed_edge_id = crossed_edges[local_i]
 
-                for local_i, global_i in zip(failed_local, failed_global):
-                    parent_cell = parent_cells[global_i, 0]
-                    crossed_edge_id = crossed_edges[local_i]
+                        next_cell = find_next_cell(mesh, parent_cell, crossed_edge_id)
 
-                    next_cell = find_next_cell(mesh, parent_cell, crossed_edge_id)
+                        if next_cell is None or next_cell == -1:
+                            # Exterior boundary hit
+                            new_parent_cells[global_i] = parent_cell
+                            boundary_particles.append(global_i)
+                            dt_left[global_i] = 0.0
+                            warnings.warn(f"Particle {global_i} attempted to cross an exterior boundary facet from cell {parent_cell}")
+                        else:
+                            new_parent_cells[global_i] = next_cell
 
-                    if next_cell is None or next_cell == -1:
-                        # Exterior boundary hit
-                        new_parent_cells[global_i] = parent_cell
-                        boundary_particles.append(global_i)
-                        dt_left[global_i] = 0.0
-                        warnings.warn(f"Particle {global_i} attempted to cross an exterior boundary facet from cell {parent_cell}")
-                    else:
-                        new_parent_cells[global_i] = next_cell
-
-                # Compute reference coordinates in the new parent cells
-                # TODO: Remove this step by pre-computing the coordinate transforms for all pairs of cells
-                # For each cell, precompute neighbouring cell store in an integer field of size num_facets
-                # pre compute coordinate transforms (A,b) and store in a matrix field
-                new_ref_coords_in_new_cells = compute_ref_coords_in_new_cell(
-                    failed_global,
-                    parent_cells,
-                    new_parent_cells,
-                    crossed_edges[failed_local],
-                    ref_coords_register,
-                    mesh,
-                    ref_cell
-                )
-                ref_coords_register[failed_global] = new_ref_coords_in_new_cells
-                print(f"  new ref coords (in next cells): {ref_coords_register[failed_global]}")
+                    # Compute reference coordinates in the new parent cells
+                    # TODO: Remove this step by pre-computing the coordinate transforms for all pairs of cells
+                    # For each cell, precompute neighbouring cell store in an integer field of size num_facets
+                    # pre compute coordinate transforms (A,b) and store in a matrix field
+                    new_ref_coords_in_new_cells = compute_ref_coords_in_new_cell(
+                        failed_global,
+                        parent_cells,
+                        new_parent_cells,
+                        crossed_edges[failed_local],
+                        ref_coords_register,
+                        mesh,
+                        ref_cell
+                    )
+                    ref_coords_register[failed_global] = new_ref_coords_in_new_cells
+                    print(f"  new ref coords (in next cells): {ref_coords_register[failed_global]}")
             
             # breakpoint()
             # 4) Update the particle VOM:
@@ -313,5 +313,6 @@ if __name__=='__main__':
     dt = T
 
     # Move particles in ref. space
-    T_final = move_particles_in_ref_space(particle_vom, mesh, v, dt, T, t=0.0)
+    with PETSc.Log.Event("ParticleTrajectoryLoop"):
+        T_final = move_particles_in_ref_space(particle_vom, mesh, v, dt, T, t=0.0)
     print("Final particle positions: ", particle_vom.coordinates.dat.data)
