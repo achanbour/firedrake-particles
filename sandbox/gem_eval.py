@@ -5,7 +5,8 @@ def evaluate_gem(gem_expr, rt_point):
     import gem
     import gem.impero_utils as impero_utils
     from tsfc.kernel_interface.firedrake_loopy import ExpressionKernelBuilder
-    
+    from pyop2.mpi import COMM_WORLD
+
     n, = gem_expr. shape
 
     # Free index over components
@@ -64,7 +65,7 @@ def evaluate_gem(gem_expr, rt_point):
     tu = kernel.ast
 
     # LoopyLocalKernel is a a PyOP2 structure
-    # It attaches PyOP2 concepts (defined globally) to the Loopy kernel (that operates locally)
+    # It attaches PyOP2 concepts (defined globally) to the Loopy kernel (operating locally)
     lk = LoopyLocalKernel(tu, "expression_kernel")
 
     # Define an iteration set of size 1 as we only have one point
@@ -72,16 +73,15 @@ def evaluate_gem(gem_expr, rt_point):
 
     # Provide a concrete runtime input point
     # NOTE: op2.Global is a flat vector of length dim so dim must be equal to the number of scalar entries in data
-    # NOTE: in this simple case, global and local are isomorphic so we can define op2.Dat with an identity mapping
+    # NOTE: in this simple case, global and local are isomorphic so we can define op2.Dat with an identity mapping instead of op2.Global variables
     rt_point = np.asarray(rt_point)
-    rt_X_global = op2.Global(rt_point.size, data=rt_point)
+    rt_X_global = op2.Global(rt_point.size, data=rt_point, comm=COMM_WORLD)
 
     # Allocate output buffer
-    A_out = np.zeros(3, dtype=float)
-    A_global = op2.Global(3, data=A_out)
+    A_out = np.zeros(n, dtype=float)
+    A_global = op2.Global(n, data=A_out, comm=COMM_WORLD)
     
-
-    # Execute the kernel in a PyOP2 parallel loop (par_loop)
+    # Execute the kernel in a PyOP2 par_loop (parallel_loop)
     op2.par_loop(
         lk,
         iterset,
@@ -94,12 +94,15 @@ def evaluate_gem(gem_expr, rt_point):
     # then loading this shared library in Python produces a pointer to a callable C function,
     # this function then gets called in a par_loop (only once here) with pointers to the global arrays/Dats as arguments
 
-    # NOTE: When assembling operators of forms,  
+    # NOTE: When assembling operators of forms, the kernel arguments are op2.Dats with op2.Maps mapping op2.Sets of function DoFs 
+    # to the op2.Sets of mesh topological entities (cells, edges etc. on which Dofs are defined)
+    # This is because DoFs are cell-local while topological entities have both a local and global numbering
+    # and the latter is used to construct the global operator
 
     return A_out
 
 """
-# rt_point.point_size gives the total number of coordinate scalars
+# rt_point.point_size gives the total number of scalar entries
 
 # Single point vector
 rt_point = np.array([0.25, 0.25])

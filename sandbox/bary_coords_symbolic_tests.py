@@ -37,63 +37,83 @@ bary_coords_interval_ufl = interval.compute_barycentric_coordinates(x_1d)
 bary_coords_tri_sympy = triangle.compute_barycentric_coordinates(p)
 bary_coords_tri_ufl = triangle.compute_barycentric_coordinates(x_2d)
 
-bary_coords_quad_sympy = quadrilateral.compute_barycentric_coordinates(p)
-bary_coorbds_quad_ufl = quadrilateral.compute_barycentric_coordinates(x_2d)
+# bary_coords_quad_sympy = quadrilateral.compute_barycentric_coordinates(p)
+# bary_coorbds_quad_ufl = quadrilateral.compute_barycentric_coordinates(x_2d)
 
-bary_coords_interval_x_interval_sympy = interval_x_interval.compute_axis_barycentric_coordinates(p)
-bary_coords_interval_x_interval_ufl = interval_x_interval.compute_axis_barycentric_coordinates(x_2d)
+# bary_coords_interval_x_interval_sympy = interval_x_interval.compute_axis_barycentric_coordinates(p)
+# bary_coords_interval_x_interval_ufl = interval_x_interval.compute_axis_barycentric_coordinates(x_2d)
 
-bary_coords_tri_x_interval_sympy = triangle_x_interval.compute_axis_barycentric_coordinates(q)
-bary_coords_tri_x_interval_ufl = triangle_x_interval.compute_axis_barycentric_coordinates(x_3d)
+# bary_coords_tri_x_interval_sympy = triangle_x_interval.compute_axis_barycentric_coordinates(q)
+# bary_coords_tri_x_interval_ufl = triangle_x_interval.compute_axis_barycentric_coordinates(x_3d)
 
-breakpoint()
-# Test fiat.reference_element.compute_barycentric_coordinates on a GEM input
-
-# Construct a GEM expression for a point set in a 2D mesh
+# Construct a GEM expression representing a point set
 N = 1
 dim = 2
-p = gem.Index("p", extent=N) # point index 
-i = gem.Index("i", extent=dim) # coordinate component index
+# rt_X = gem.Variable("rt_X", shape=(N, dim)) 
+# p = gem.Index("p", extent=N) # point index 
+# i = gem.Index("i", extent=dim) # coordinate component index
+# point_vec = gem.ComponentTensor(gem.Indexed(rt_X, (p, i)),(i, )) # rank-1 tensor (vector) with free indices i and p and unindexed by component index i
+# single_point_vec = gem.ComponentTensor(gem.Indexed(rt_X, (0, i)),(i, )) # rank-1 tensor (vector) with only one free index i and unindexed by component index i (collapsed the point dim.)
 
-rt_X = gem.Variable("rt_X", shape=(N, dim)) 
-point_vec = gem.ComponentTensor(gem.Indexed(rt_X, (p, i)),(i, )) # rank-1 tensor indexed by i, parametrised by free point index p
-single_point_vec = gem.ComponentTensor(gem.Indexed(rt_X, (0, i)),(i, )) # rank-1 tensor indexed by i (no point index p)
+rt_X = gem.Variable("rt_X", shape=(2, )) # no free indices
 
-# NOTE: meaningless output -- FIAT routines are not meant to accept GEM objects
-# what we need is a method in FInAT that has a callback to fiat.reference_element.compute_barycentric_coordinates
-bary_coords_tri_gem = triangle.compute_barycentric_coordinates(point_vec)
+# NOTE: when `compute_barycentric_coordinates` performs numpy operations on its input `points` and we pass GEM nodes to it
+# the output obtained is the result of doing numpy manipulations on GEM objects, not GEM tensor algebra operations
+# so the GEM output is broken
+
+# NEW: After changing numpy operations to matrix operations (which have a specialised implementation in GEM)
+# and having GEM create a Literal node for the other numpy array operand in GEM.Node.__matmul__
+bary_coords_tri_gem = triangle.compute_barycentric_coordinates(rt_X)
+bary_coords_quad_gem  = quadrilateral.compute_barycentric_coordinates(rt_X)
+
+bary_coords_tp_gem = triangle_x_interval.compute_axis_barycentric_coordinates(gem.Variable("rt_X", shape=(3, )))
 
 breakpoint()
 
-# Test finat.fiat_elements.barycentric_coordinates
+# Check the GEM expression by evaluating it at a given point
+# This requires building/compiling a TSFC kernel
+x_hat = np.array([0.25, 0.25])
+x_hat_3d = np.array([0.25, 0.25, 0.25])
 
+# Test finat.fiat_elements.barycentric_coordinates
+# This generates a GEM expression for barycentric coordinates by converting SymPy to GEM
 ref_element = mesh_2d.coordinates.function_space().finat_element
 ref_element_quad = mesh_2d_quad.coordinates.function_space().finat_element
 
-# Check the GEM expression by evaluating it at a given point
-x_hat = [[0.25, 0.25]]
+# -- Numeric tabulation in FIAT
+bary_coords_tri_vals = ref_element.cell.compute_barycentric_coordinates(x_hat)
+bary_coords_quad_vals = ref_element_quad.cell.compute_barycentric_coordinates(x_hat)
 
-# -- Numeric tabulation executed by FIAT
-bary_coords_vals = ref_element.cell.compute_barycentric_coordinates(x_hat)
-bary_coords_vals_quad = ref_element_quad.cell.compute_barycentric_coordinates(x_hat)
+# Test a 3D TP cell
+bary_coords_tp_vals = triangle_x_interval.compute_axis_barycentric_coordinates(x_hat_3d)
 
-print("Barycentric coords computed by FIAT (triangle):", bary_coords_vals)
-# print("Barycentric coords computed by FIAT (quad):", bary_coords_vals_quad)
+print("Barycentric coords tabulated by FIAT (triangle):", bary_coords_tri_vals)
+print("Barycentric coords tabulated by FIAT (quad):", bary_coords_quad_vals)
 
-# -- GEM is TSFC's IR so we evaluate the GEM expression by compiling/executing a TSFC kernel
-bary_gem_expr = ref_element.barycentric_coordinates(single_point_vec)
+print("Barycentric coords tabulated by FIAT (TP cell in 3D):", bary_coords_tp_vals)
 
-# NOTE: Doesn't work for quads since the FInAt element is a `FlattenedDimensions`
-# which is not a FiatElement. A possible solution to make this work is to implement a barycentric_coordinates() method
-# in the FlattenedDimensions class
-# bary_gem_expr_quad = ref_element_quad.barycentric_coordinates(single_point_vec)
+# bary_cords_tri_gem_finat = ref_element.barycentric_coordinates(single_point_vec)
+# NOTE: This doesn't work for quads since the FInAt element is a `FlattenedDimensions`
+# which is not a FiatElement. 
+# A possible solution to make this work is to implement a barycentric_coordinates() method in the FlattenedDimensions class
 
 from gem_eval import evaluate_gem
-bary_coords_gem_vals = evaluate_gem(bary_gem_expr, x_hat)
-# bary_coords_gem_vals_quad = evaluate_gem(bary_gem_expr_quad, x_hat)
+# Evaluate GEM produced by FInAT (on FiatElement only)
+# bary_coords_finat_gem_vals = evaluate_gem(bary_cords_tri_gem_finat, x_hat)
+# print("Barycentric coords obtained by evaluating FInAt's GEM expr (triangle):", bary_coords_finat_gem_vals)
 
-print("Barycentric coords obtained by evaluating GEM (triangle):", bary_coords_gem_vals)
-# print("Barycentric coords evalauted by evaluating GEM (quad):", bary_coords_gem_vals_quad)
+# Evaluate GEM produced by FIAT
+bary_coords_fiat_gem_vals = evaluate_gem(bary_coords_tri_gem, x_hat)
+bary_coords_gem_vals_quad = evaluate_gem(bary_coords_quad_gem, x_hat)
 
+print("Barycentric coords obtained by evaluating FIAT's GEM expr (triangle):", bary_coords_tri_vals)
+print("Barycentric coords obtained by evaluating FIAT's GEM expr (quad):", bary_coords_gem_vals_quad)
 
+# NOTE: `bary_coords_tp_gem` is a list of GEM expressions representing barycentric coordinates along each axis
+# of the TP cell. Hence we need to call evaluate_gem on each of these expressions separately
+bary_coords_gem_vals_tp_axis0 = evaluate_gem(bary_coords_tp_gem[0], x_hat_3d)
+bary_coords_gem_vals_tp_axis1 = evaluate_gem(bary_coords_tp_gem[1], x_hat_3d)
+print(f"Barycentric coords obtained by evaluating FIAT's GEM expr (TP cell in 3D):\n \
+      axis 0: {bary_coords_gem_vals_tp_axis0},\n \
+      axis 1: {bary_coords_gem_vals_tp_axis1}")
 
