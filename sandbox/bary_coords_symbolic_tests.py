@@ -65,7 +65,6 @@ rt_X = gem.Variable("rt_X", shape=(2, )) # no free indices
 # and having GEM create a Literal node for the other numpy array operand in GEM.Node.__matmul__
 bary_coords_tri_gem = triangle.compute_barycentric_coordinates(rt_X)
 bary_coords_quad_gem  = quadrilateral.compute_barycentric_coordinates(rt_X)
-
 bary_coords_tp_gem = triangle_x_interval.compute_axis_barycentric_coordinates(gem.Variable("rt_X", shape=(3, )))
 
 breakpoint()
@@ -110,7 +109,7 @@ print("Barycentric coords obtained by evaluating FIAT's GEM expr (triangle):", b
 print("Barycentric coords obtained by evaluating FIAT's GEM expr (quad):", bary_coords_gem_vals_quad)
 
 # NOTE: `bary_coords_tp_gem` is a list of GEM expressions representing barycentric coordinates along each axis
-# of the TP cell. Hence we need to call evaluate_gem on each of these expressions separately
+# of the TP cell. Hence we need to call `evaluate_gem`` on each of these expressions separately
 bary_coords_gem_vals_tp_axis0 = evaluate_gem(bary_coords_tp_gem[0], x_hat_3d)
 bary_coords_gem_vals_tp_axis1 = evaluate_gem(bary_coords_tp_gem[1], x_hat_3d)
 print(f"Barycentric coords obtained by evaluating FIAT's GEM expr (TP cell in 3D):\n \

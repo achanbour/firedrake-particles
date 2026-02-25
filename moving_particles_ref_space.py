@@ -210,6 +210,11 @@ def advance_ref_coords_euler(ref_pos_fn, invJ_vom, v_fn, dt_fn):
 
     To distinguish between active and inactive particles within the inner loop,
     pass dt_fn as a DG0 Function storing per-particle time steps.
+
+    # TODO
+    - see non-linear variational solver
+    - persistent object that does the advancing (carries the caches we need)
+    - will have an evaluate method (set up par loops) that will update the values
     """
     # Mesh consistency checks
     m = ref_pos_fn.function_space().mesh()
