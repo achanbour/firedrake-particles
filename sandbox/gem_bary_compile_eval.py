@@ -1,7 +1,7 @@
 import numpy as np
 
 def evaluate_gem(gem_expr, rt_point):
-    """Evaluate a rank-1 GEM tensor expression at a single runtime point"""
+    """Evaluate a rank-1 GEM tensor expression at a single runtime point."""
     import gem
     import gem.impero_utils as impero_utils
     from tsfc.kernel_interface.firedrake_loopy import ExpressionKernelBuilder
@@ -57,7 +57,7 @@ def evaluate_gem(gem_expr, rt_point):
         A[i] += t0[i];
     }
     """
-
+    
     # Execute the kernel via PyOP2
     from pyop2 import op2
     from pyop2.local_kernel import LoopyLocalKernel
