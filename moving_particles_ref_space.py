@@ -202,6 +202,7 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
 
     return t
 
+spike = 1 
 def advance_ref_coords_euler(ref_pos_fn, invJ_vom, v_fn, dt_fn):
     """
     Advance particles forward by one Euler step in reference space.
@@ -221,9 +222,27 @@ def advance_ref_coords_euler(ref_pos_fn, invJ_vom, v_fn, dt_fn):
     assert invJ_vom.function_space().mesh() == m
     assert v_fn.function_space().mesh() == m
     assert dt_fn.function_space().mesh() == m
+
+    global spike
     
     update_expr = ref_pos_fn + invJ_vom * v_fn * dt_fn
+    spike += 0.00001
     new_ref_pos_fn = assemble(interpolate(update_expr, ref_pos_fn.function_space()))
+    
+    """
+    On each call:
+
+    if expr_hash has changed:
+        e.g., when using a different integration scheme so update_expr is different now
+        Rebuild the interpolator
+
+        euler_interpolator = Interpolate(update_expr, ref_pos_fn.function_space())
+
+    else:
+        Reuse interpolator
+
+    """
+
     return new_ref_pos_fn
 
 def bisect_crossing_time_simd(
