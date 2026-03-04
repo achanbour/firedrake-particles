@@ -1,11 +1,11 @@
 import numpy as np
+import gem
+import gem.impero_utils as impero_utils
+from tsfc.kernel_interface.firedrake_loopy import ExpressionKernelBuilder
+from pyop2.mpi import COMM_WORLD
 
 def evaluate_gem(gem_expr, rt_point):
     """Evaluate a rank-1 GEM tensor expression at a single runtime point."""
-    import gem
-    import gem.impero_utils as impero_utils
-    from tsfc.kernel_interface.firedrake_loopy import ExpressionKernelBuilder
-    from pyop2.mpi import COMM_WORLD
 
     n, = gem_expr. shape
 
@@ -21,7 +21,8 @@ def evaluate_gem(gem_expr, rt_point):
 
     # Lower GEM -> Impero (loop IR)
     # Express rank-1 assignment as an Impero program involving loops (scheduled tensor algebra)
-    impero_c = impero_utils.compile_gem([(return_expr, evaluation_expr)], (k, ))
+    preprocessed_evaluation_expr = impero_utils.preprocess_gem([evaluation_expr])[0]
+    impero_c = impero_utils.compile_gem([(return_expr, preprocessed_evaluation_expr)], (k, ))
 
     # Build a TSFC ExpressionKernel
     kernel_builder = ExpressionKernelBuilder("double")
@@ -36,7 +37,7 @@ def evaluate_gem(gem_expr, rt_point):
     kernel_builder.set_output(A)
 
     # Infer other kernel arguments from the dependencies of the GEM evaluation expression tree (e.g., rt_X)
-    kernel_builder.register_requirements([evaluation_expr])
+    kernel_builder.register_requirements([preprocessed_evaluation_expr])
 
     # Build the kernel
     kernel = kernel_builder.construct_kernel(impero_c, {}, False, False)

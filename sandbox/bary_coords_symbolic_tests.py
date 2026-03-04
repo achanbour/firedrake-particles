@@ -96,7 +96,7 @@ print("Barycentric coords tabulated by FIAT (TP cell in 3D):", bary_coords_tp_va
 # which is not a FiatElement. 
 # A possible solution to make this work is to implement a barycentric_coordinates() method in the FlattenedDimensions class
 
-from gem_eval import evaluate_gem
+from gem_bary_compile_eval import evaluate_gem
 # Evaluate GEM produced by FInAT (on FiatElement only)
 # bary_coords_finat_gem_vals = evaluate_gem(bary_cords_tri_gem_finat, x_hat)
 # print("Barycentric coords obtained by evaluating FInAt's GEM expr (triangle):", bary_coords_finat_gem_vals)

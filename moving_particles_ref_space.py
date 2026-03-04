@@ -240,7 +240,7 @@ def bisect_crossing_time_simd(
     """SIMD-style bisection algorithm that detects particle crossings.
     
     Instead of reconstructing midpoints using a hard-coded linear interpolation,
-    this function evaluates midpoint positions by re-running the integrator.
+    this function evaluates midpoint positions by re-running the time stepping routine.
 
     Returns crossing times and reference coordinates at the crossing point for failed particles.
     """
@@ -265,7 +265,7 @@ def bisect_crossing_time_simd(
         
         # For particles inside at the midpoint, advance lower end of the bracket
         t_lo[inside] = t_mid[inside]
-        # For particels outside at the midpoing, advance higher end of the bracket
+        # For particels outside at the midpoint, advance higher end of the bracket
         t_hi[~inside] = t_mid[~inside]
         
         # Early exit if all brackets shrink sufficiently
@@ -317,3 +317,6 @@ if __name__=='__main__':
     with PETSc.Log.Event("ParticleTrajectoryLoop"):
         T_final = move_particles_in_ref_space(particle_vom, mesh, v, dt, T, t=0.0)
     print("Final particle positions: ", particle_vom.coordinates.dat.data)
+
+    from pyop2.caching import print_cache_stats
+    print_cache_stats()
