@@ -351,7 +351,10 @@ if __name__=='__main__':
     print("Final particle positions: ", particle_vom.coordinates.dat.data)
 
     from pyop2.caching import print_cache_stats
-    print_cache_stats()
+    # print_cache_stats()
 
-    print(f"bisection: {i}")
-    print(f"advance_ref_coords: {j}")
+    from pyop2.parloop import PARLOOP_CALL_COUNT
+    print("Total ParLoop kernel calls: ", PARLOOP_CALL_COUNT)
+
+    print(f"calls to advance_ref_coords_euler: {j}")
+    print(f"calls to bisection: {i}")

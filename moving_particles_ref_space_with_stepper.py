@@ -4,7 +4,7 @@ from ufl.differentiation import ReferenceGrad
 import numpy as np
 import warnings
 from update_vom import VertexOnlyMeshUpdater
-from persistent_particle_stepper import EulerParticleStepper
+from particle_time_stepper import ForwardEulerTimeStepper
 
 np.random.seed(42)
 
@@ -27,39 +27,39 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
 
     pmesh_updater = VertexOnlyMeshUpdater(pmesh, mesh)
 
+    # Create reusable function spaces and stepper outside the time loop
+    TFS_vom = TensorFunctionSpace(pmesh, "DG", 0) # Tensor FS for the Jacobian inverse
+    invJ_vom = Function(TFS_vom)
+
+    FS_vom = FunctionSpace(pmesh, "DG", 0) # Scalar FS for per-particle time steps
+    dt_trial_fn = Function(FS_vom)
+
+    ref_coords_fn = pmesh.reference_coordinates # current reference coordinates
+
+    stepper = ForwardEulerTimeStepper(
+        ref_coords_fn,
+        invJ_vom,
+        v_fn,
+        dt_trial_fn
+    )
+
     while t < T:
-        TFS_vom = TensorFunctionSpace(pmesh, "DG", 0) # Tensor FS for the Jacobian inverse
-        invJ_vom = Function(TFS_vom)
-
-        FS_vom = FunctionSpace(pmesh, "DG", 0) # Scalar FS for per-particle time steps
-        dt_trial_fn = Function(FS_vom)
-
-        ref_coords_fn = pmesh.reference_coordinates # current reference coordinates
-
         boundary_particles = [] # list to keep track of particles that hit the domain boundary
 
         # Define per-particle tracking loop variables
         dt_left = np.full(N, dt) # remaining time for the current time step
-        ref_coords_register = ref_coords_fn.dat.data_ro.copy() # registery of updated ref. coords
-
-        # Create the stepper once per outer time loop
-        stepper = EulerParticleStepper(
-            ref_coords_fn,
-            invJ_vom,
-            v_fn,
-            dt_trial_fn
-        )
+        ref_coords_register = ref_coords_fn.dat.data_ro.copy() # array to store updating ref. coords.
 
         # Run inner loop while there are active particles (those that have not yet finished their dt)
         inner_loop_iter = 0
         active_iters = np.zeros(N, dtype=int)
 
         while True:
-            # Ensure ref_coords_register is equal to the "latest" ref coords
+            # Ensure ref_coords_register holds the latest ref coords
             if not np.array_equal(ref_coords_register, ref_coords_fn.dat.data_ro):
                 ref_coords_register = ref_coords_fn.dat.data_ro.copy()
 
-            # Check if there any active particles left
+            # Check if there are any active particles left
             active = dt_left > 0
             if not np.any(active):
                 break
@@ -69,25 +69,22 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
             active_iters[active_indices] += 1
 
             # Process active particles
-            # For all currently active particles, compute updated positions and detect crossings
-            # dt_trial_fn = Function(FS_vom)
-
             # NOTE: this line enforces that dt_left indexes particles in VOM ordering 
             # i.e., dt_left[i] corresponds to VOM particle i
-            dt_trial_fn.dat.data[:] = 0
-            dt_trial_fn.dat.data[active_indices] = dt_left[active_indices]
+            stepper.dt.dat.zero()
+            stepper.dt.dat.data_wo[active_indices] = dt_left[active_indices]
             
-            invJ_vom.interpolate(invJ_expr) # recompute invJ on the CURRENT embedding
+            # Recompute invJ on the CURRENT embedding
+            # NOTE: This is is done here rather than in the outer loop as cell ownership changes
+            # between iterations of the inner loop.
+            invJ_vom.interpolate(invJ_expr)
             
-            # trial_ref_pos_fn = advance_ref_coords_euler(ref_coords_fn, invJ_vom, v_fn, dt_trial_fn)
-            trial_ref_pos_fn = stepper.evaluate()
+            trial_ref_pos_fn = stepper.step()
 
             # Compute barycentric coordinates at the old and new points
-            #  bary_old = ref_cell.compute_barycentric_coordinates(ref_coords_fn.dat.data_ro)
             bary_new = ref_cell.compute_barycentric_coordinates(trial_ref_pos_fn.dat.data_ro)
 
             # Split particles into passed/failed sets
-            # passed_mask = np.array([is_inside_cell(bary, tol=1e-12) for bary in bary_new[active_indices]])
             passed_mask = np.all(bary_new[active_indices] >= -1e-12, axis=1)
             failed_mask = ~passed_mask
 
@@ -186,10 +183,9 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
 
                     print(f"  new ref coords (in next cells): {ref_coords_register[failed_global]}")
             
-            # breakpoint()
             # 4) Update the particle VOM:
             # - modify parent cell ownership
-            # - update the reference coordinates (otherwise the next assemble/interpolate update will give wrong results)
+            # - update the reference coordinates 
             pmesh_updater.update_ref_view(new_parent_cells, ref_coords_register)
 
             # - recompute inverse Jacobian using new parent cell ownership (done at start of inner loop)
@@ -207,11 +203,9 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
 
         # Now update the VOM by removing all boundary particles
         # i.e., particles that have hit an exterior boundary in one of the iterations above.
-        # This causes the VOM topology to change.
+        # This operation causes the VOM topology to change.
 
         # Rebuild the VOM given the updated particle positions
-        # NOTE: Physical coordinates can be obtained from reference coordinates by interpolating the parent mesh into the VOM
-        # Interpolation makes use of the parent cell ownership information and reference coordinates of VOM points
         new_phys_coords = assemble(interpolate(SpatialCoordinate(mesh), pmesh.coordinates.function_space()))
         pmesh_updater.rebuild_vom(absorbed_vom_indices=boundary_particles, new_coords=new_phys_coords.dat.data_ro)
 
@@ -219,55 +213,12 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
 
     return t
 
-spike = 1 
-def advance_ref_coords_euler(ref_pos_fn, invJ_vom, v_fn, dt_fn):
-    """
-    Advance particles forward by one Euler step in reference space.
-
-    X(t + dt) = X(t) + J^-1*v*dt
-
-    To distinguish between active and inactive particles within the inner loop,
-    pass dt_fn as a DG0 Function storing per-particle time steps.
-
-    # TODO
-    - see non-linear variational solver
-    - persistent object that does the advancing (carries the caches we need)
-    - will have an evaluate method (set up par loops) that will update the values
-    """
-    # Mesh consistency checks
-    m = ref_pos_fn.function_space().mesh()
-    assert invJ_vom.function_space().mesh() == m
-    assert v_fn.function_space().mesh() == m
-    assert dt_fn.function_space().mesh() == m
-
-    global spike
-    
-    update_expr = ref_pos_fn + invJ_vom * v_fn * dt_fn
-    spike += 0.00001
-    new_ref_pos_fn = assemble(interpolate(update_expr, ref_pos_fn.function_space()))
-    
-    """
-    On each call:
-
-    if expr_hash has changed:
-        e.g., when using a different integration scheme so update_expr is different now
-        Rebuild the interpolator
-
-        euler_interpolator = Interpolate(update_expr, ref_pos_fn.function_space())
-
-    else:
-        Reuse interpolator
-
-    """
-
-    return new_ref_pos_fn
-
 def bisect_crossing_time_simd(
         stepper,
         dt_left,
         ref_cell, 
         failed_global,
-        tol=1e-12,
+        tol=1e-4,
         max_iters=30
 ):
     """SIMD-style bisection algorithm that detects particle crossings.
@@ -292,13 +243,12 @@ def bisect_crossing_time_simd(
 
         # Instead of defining a brand-new function update the data the kernel reads
         # This is fine because `dt_trial_fn` gets reset before the next step evaluation
-        stepper.dt.dat.data[:] = 0
-        # stepper.dt.dat.zero ?
+        # stepper.dt.dat.data[:] = 0
+        stepper.dt.dat.zero()
         stepper.dt.dat.data_wo[failed_global] = t_mid
 
         # Advance only failed particles by mid time substep
-        # mid_ref_fn = advance_ref_coords_euler(ref_coords_fn, invJ_vom, v_fn, dt_mid_fn)
-        mid_ref_fn = stepper.evaluate()
+        mid_ref_fn = stepper.step()
 
         X_mid = mid_ref_fn.dat.data[failed_global]
         bary_mid = ref_cell.compute_barycentric_coordinates(X_mid)
@@ -317,10 +267,9 @@ def bisect_crossing_time_simd(
     t_cross = t_lo
 
     # Compute barycentric coordinates at the crossing point
-    # cross_ref_fn = advance_ref_coords_euler(ref_coords_fn, invJ_vom, v_fn, dt_cross_fn)
-    stepper.dt.dat.data[:] = 0
+    stepper.dt.dat.zero()
     stepper.dt.dat.data_wo[failed_global] = t_cross
-    cross_ref_fn = stepper.evaluate()
+    cross_ref_fn = stepper.step()
     X_cross = cross_ref_fn.dat.data_ro[failed_global]
     bary_cross = ref_cell.compute_barycentric_coordinates(X_cross)
 
@@ -360,5 +309,12 @@ if __name__=='__main__':
         T_final = move_particles_in_ref_space(particle_vom, mesh, v, dt, T, t=0.0)
     print("Final particle positions: ", particle_vom.coordinates.dat.data)
 
-    from pyop2.caching import print_cache_stats
-    print_cache_stats()
+    from particle_time_stepper import STEP_COUNT
+    print("Total ForwardEulerTimeStepper step calls: ", STEP_COUNT)
+
+    # from pyop2.caching import print_cache_stats
+    # print_cache_stats()
+    # replace by: PYOP2_CACHE_INFO=1
+
+    from pyop2.parloop import PARLOOP_CALL_COUNT
+    print("Total ParLoop kernel calls: ", PARLOOP_CALL_COUNT)
