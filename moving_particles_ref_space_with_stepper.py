@@ -12,6 +12,8 @@ t = 0.0
 dt = 0.1
 T = 1
 
+# TODO: Check robustness of cell crossing with higher order mesh coordinate field
+
 def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
     """
     Update particles in reference space using Forward Euler:
@@ -207,6 +209,8 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
 
         # Rebuild the VOM given the updated particle positions
         new_phys_coords = assemble(interpolate(SpatialCoordinate(mesh), pmesh.coordinates.function_space()))
+        # TODO: Exchange occurs -> 2 sets of particles: absorbed (left mesh domain or partition boundary) + arrived
+        # Updates all fields eargely
         pmesh_updater.rebuild_vom(absorbed_vom_indices=boundary_particles, new_coords=new_phys_coords.dat.data_ro)
 
         t += dt
@@ -305,16 +309,17 @@ if __name__=='__main__':
     dt = T
 
     # Move particles in ref. space
+    import timeit
     with PETSc.Log.Event("ParticleTrajectoryLoop"):
+        t0 = timeit.default_timer()
         T_final = move_particles_in_ref_space(particle_vom, mesh, v, dt, T, t=0.0)
+        t1 = timeit.default_timer()
+        print(f"[wall_time] {t1 - t0} s")
     print("Final particle positions: ", particle_vom.coordinates.dat.data)
 
-    from particle_time_stepper import STEP_COUNT
-    print("Total ForwardEulerTimeStepper step calls: ", STEP_COUNT)
+    # from particle_time_stepper import STEP_COUNT
+    # print("Total ForwardEulerTimeStepper calls: ", STEP_COUNT)
 
     # from pyop2.caching import print_cache_stats
     # print_cache_stats()
     # replace by: PYOP2_CACHE_INFO=1
-
-    from pyop2.parloop import PARLOOP_CALL_COUNT
-    print("Total ParLoop kernel calls: ", PARLOOP_CALL_COUNT)

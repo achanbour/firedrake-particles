@@ -18,11 +18,15 @@ class ForwardEulerTimeStepper:
         # So we check they're all defined on the same mesh (particle VOM)
         m = V.mesh()
         assert invJ.function_space().mesh() == m
-        assert v.function_space().mesh() == m
         assert dt.function_space().mesh() == m
+
+        # v could be an expression on the VOM OR parent mesh
+        assert v.function_space().mesh() == m
         
         # Forward Euler update expression (in ref. space)
         self.update_expr = X + invJ * v * dt
+
+        # TODO: not needed
         self.expr_hash = hash_expr(self.update_expr)
 
         self.output = Function(V)
@@ -38,6 +42,7 @@ class ForwardEulerTimeStepper:
         self.callable = self.interpolator._get_callable(tensor=self.output)
 
     def _check_callable_is_current(self):
+        # TODO: Make update expression a property with a boolean that sets to False upon update
         current_hash = hash_expr(self.update_expr)
         if current_hash != self.expr_hash:
             self.expr_hash = current_hash
@@ -62,7 +67,7 @@ class ForwardEulerTimeStepper:
 #   Per outer time loop or once per integration?
 #   The VOM gets resized between successive time steps which causes the Function Spaces and Functions
 #   to get automatically rebuilt. Since the underlying objects remain the same, this amounts to merely resizing the Dats
-#   so the stepper is likely to be defined outside the time loop.
+#   so we can most likely define the stepper outside the time loop.
 # 2. Mutating the Dats of the Functions forming the update expression
 # 3. Calling stepper.step()
     
