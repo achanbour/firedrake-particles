@@ -501,7 +501,7 @@ class VertexOnlyMeshUpdater:
         new_mesh_geometry._parent_mesh = self.parent_mesh
 
         # --Transfer the new topology into the existing mesh (MeshGeometry) object--
-        self.vom._topology = new_vom_topology
+        self.vom.topology = new_vom_topology
         self.vom._parent_mesh = self.parent_mesh
         self.vom._tolerance = tolerance
 
@@ -512,15 +512,9 @@ class VertexOnlyMeshUpdater:
         # A `CoordinatelessFunction(V, ..)` lives on a function space `V` whose DM/Section specifies how many DoFs there are and how they're arranged. It does not carry a reference to a mesh (`MeshGeometry` object).
         # So `_coordinates` is just a vector of numbers laid out in the FS DoF layout. It can exist independently of the mesh.
         # When we access the `mesh.coordinates` field, Firedrake wraps that coordinateless fucnction in a `WithGeometry` function which binds it to the mesh geometry. This allows UFL to treat it as a spatial coordinate field.
-        
-        # NOTE: `_coordinates` is a read-only property of MeshGeometry, the data lives in `ufl_cargo().coordinates`
-        # self.vom._coordinates = new_mesh_geometry._coordinates
-        self.vom.ufl_cargo().coordinates = new_mesh_geometry.ufl_cargo().coordinates
 
-        # NOTE: Since the coordinateless Function caches a weakref to its MeshGeometry object, we need to update that and clear the caches.
-        self.vom.ufl_cargo().coordinates._as_mesh_geometry = weakref.ref(self.vom)
-        if hasattr(self.vom.ufl_cargo(), "_coordinates_function"):
-            del self.vom.ufl_cargo()._coordinates_function
+        self.vom._coordinates = new_mesh_geometry._coordinates
+        self.vom._coordinates_function = new_mesh_geometry._coordinates_function
 
         # Remove cached `coordinates` so they are rebuilt from the new topology.
         if "coordinates" in self.vom.__dict__:
@@ -546,8 +540,7 @@ class VertexOnlyMeshUpdater:
             val=ref_coords_data,
             name=_generate_default_mesh_reference_coordinates_name(self.vom.name),
         )
-
-        refV = functionspaceimpl.WithGeometry.create(ref_coords_fs, self.vom)
+        refV = functionspaceimpl.WithGeometry(ref_coords_fs, self.vom)
         self.vom.reference_coordinates = function.Function(refV,val=ref_coords_top)
 
         # --Clear cached topology-derived attributes on both the topology object and the mesh object--
