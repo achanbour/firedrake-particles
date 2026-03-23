@@ -505,7 +505,6 @@ class VertexOnlyMeshUpdater:
         self.vom._parent_mesh = self.parent_mesh
         self.vom._tolerance = tolerance
 
-        
         # --Transfer the new coordinates into the VOM--
         # NOTE: the mesh coordinate field defines the geometry of the mesh. Therefore, it is defined as a CoordinatelessFunction (as opposed to a Function WithGeometry)
         # This means that its function space is built entirely from the mesh topology and the element type, and is not bound to a geometry object.

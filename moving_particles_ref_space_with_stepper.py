@@ -8,11 +8,9 @@ from particle_time_stepper import ForwardEulerTimeStepper
 
 np.random.seed(42)
 
-t = 0.0
-dt = 0.1
+t = 0.0 # current time
+dt = 0.05 # time step
 T = 1
-
-# TODO: Check robustness of cell crossing with higher order mesh coordinate field
 
 def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
     """
@@ -22,7 +20,6 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
     
     where J = dF/dX is the Jacobian of the geometric map F: X -> x.
     """
-    N = pmesh.num_vertices()
     x = SpatialCoordinate(mesh)
     invJ_expr = inv(ReferenceGrad(x))
     ref_cell = mesh.coordinates.function_space().finat_element.cell
@@ -45,7 +42,16 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
         dt_trial_fn
     )
 
+    outer_time_loop = 0
     while t < T:
+        N = pmesh.num_vertices()
+
+        outer_time_loop += 1
+        print(f"\n[outer time loop]: {outer_time_loop}\n" \
+              f"t={t:.3f} -> {min(t+dt, T):.3f}\n" \
+              f"N={N}"
+        )
+
         boundary_particles = [] # list to keep track of particles that hit the domain boundary
 
         # Define per-particle tracking loop variables
@@ -108,19 +114,23 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
                 - update parent cell to neighbour across the crossed facet
                 - re-enter inner loop as active with updated ref. pos., parent cell and dt_left
             """
-            print(f"\n---Inner loop iteration: {inner_loop_iter}---")
-            print(f"Active particles: {active_indices}")
-            print(f"  Failed set: {failed_global}")
-            print(f"  Passed set: {passed_global}")
+            # print(f"\n---Inner loop iteration: {inner_loop_iter}---")
+            print(f"\n[inner loop] iteration {inner_loop_iter}")
+            print(f"    active particles: {active_indices}")
+            print(f"    failed set: {failed_global}")
+            print(f"    passed set: {passed_global}")
 
             # Passed particles
             if len(passed_global) > 0:
                 dt_left[passed_global] = 0
                 ref_coords_register[passed_global] = trial_ref_pos_fn.dat.data_ro[passed_global]
 
-                print("\nPassed set info:")
-                print(f"  dt_left: {dt_left[passed_global]}")
-                print(f"  new ref_coords: {ref_coords_register[passed_global]}")
+                print("\n   passed set info:")
+                print(f"        dt left: {dt_left[passed_global]}")
+                print(f"        new ref coords: {ref_coords_register[passed_global]}")
+
+            parent_cells = pmesh.topology.cell_parent_cell_list # parent cell ID for each point in VOM order
+            new_parent_cells = parent_cells.copy()
 
             # Failed particles
             if len(failed_global) > 0:
@@ -133,9 +143,9 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
                 t_cross, bary_cross, X_cross = bisect_crossing_time_simd(stepper, dt_left, ref_cell, failed_global)
 
                 dt_left[failed_global] -= t_cross
-                print("Failed set info:")
-                print(f"  dt_left: {dt_left[failed_global]}")
-                print(f"  new ref coords (in current cell): {X_cross}")
+                print("\n   failed set info:")
+                print(f"        dt_left: {dt_left[failed_global]}")
+                print(f"        new ref coords (in original cell): {X_cross}")
             
                 # From the barycentric coords. at the crossing point, determine which edge the particle crossed
                 local_crossed_edge_ids = np.full(len(active_indices), None, dtype=object)
@@ -155,9 +165,6 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
                         breakpoint()
 
                 # Identify the next cells to move the particles to given the crossed facets
-                parent_cells = pmesh.topology.cell_parent_cell_list # parent cell ID for each point in VOM order
-                new_parent_cells = parent_cells.copy()
-
                 with PETSc.Log.Event("LookupCellTransitions"):
                     for j, global_i in enumerate(failed_global):
                         # NOTE:
@@ -173,17 +180,17 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
 
                         if next_cell is None or next_cell == -1:
                             # Exterior boundary hit
-                            new_parent_cells[global_i] = parent_cell
+                            new_parent_cells[global_i, 0] = parent_cell
                             boundary_particles.append(global_i)
                             dt_left[global_i] = 0.0
                             warnings.warn(f"Particle {global_i} attempted to cross an exterior boundary facet from cell {parent_cell}")
                         else:
-                            new_parent_cells[global_i] = next_cell
+                            new_parent_cells[global_i, 0] = next_cell
                         
                         A_facet_coord_transform, b_facet_coord_transform = mesh.topology.cell_facet_coord_transforms
                         ref_coords_register[global_i] = A_facet_coord_transform.data[parent_cell, local_crossed_edge_id] @ X_cross[j] + b_facet_coord_transform.data[parent_cell, local_crossed_edge_id]
 
-                    print(f"  new ref coords (in next cells): {ref_coords_register[failed_global]}")
+                    print(f"        new ref coords (in new cell): {ref_coords_register[failed_global]}")
             
             # 4) Update the particle VOM:
             # - modify parent cell ownership
@@ -300,21 +307,17 @@ if __name__=='__main__':
     V_io = VectorFunctionSpace(particle_vom.input_ordering, "DG", 0, dim=gdim)
     v = Function(V)
     v_io = Function(V_io)
-    input_velocities = np.random.normal(0.0, 0.5, size=(N,2))
+    input_velocities = np.random.normal(-0.4, 0.15, size=(N,2))
     v_io.dat.data[:] = input_velocities
     v.interpolate(v_io)
 
-    # Set the parameters below to do a single integration step 
-    T = 0.3
-    dt = T
-
     # Move particles in ref. space
-    import timeit
+    # import timeit
     with PETSc.Log.Event("ParticleTrajectoryLoop"):
-        t0 = timeit.default_timer()
+        # t0 = timeit.default_timer()
         T_final = move_particles_in_ref_space(particle_vom, mesh, v, dt, T, t=0.0)
-        t1 = timeit.default_timer()
-        print(f"[wall_time] {t1 - t0} s")
+        # t1 = timeit.default_timer()
+        # print(f"[wall_time] {t1 - t0} s")
     print("Final particle positions: ", particle_vom.coordinates.dat.data)
 
     # from particle_time_stepper import STEP_COUNT
@@ -323,3 +326,7 @@ if __name__=='__main__':
     # from pyop2.caching import print_cache_stats
     # print_cache_stats()
     # replace by: PYOP2_CACHE_INFO=1
+
+# TODO:
+# - Check robustness of cell crossing with higher order mesh coordinate field
+# - End of particle loop: halo exchange + update all fields eagerly

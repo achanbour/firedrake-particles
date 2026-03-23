@@ -59,7 +59,7 @@ class ForwardEulerTimeStepper:
 
 # NOTE 1:
 # With the above persistent time stepper, we eliminate the overhead from symbolically reconstructing the interpolation expression
-# and associated expensive TSFC compilation + ParLoop construction.
+# and associated expensive TSFC re-compilation and ParLoop re-construction.
 # This however does not reduce the number of runtime cache lookups that PyOP2 performs when exeucting the ParLoops.
 
 # Updating the particles positions amounts to:
