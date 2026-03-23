@@ -1,5 +1,4 @@
 from firedrake.interpolation import interpolate, get_interpolator
-from tsfc.ufl_utils import hash_expr
 from firedrake import Function
 
 STEP_COUNT = 0
@@ -26,9 +25,6 @@ class ForwardEulerTimeStepper:
         # Forward Euler update expression (in ref. space)
         self.update_expr = X + invJ * v * dt
 
-        # TODO: not needed
-        self.expr_hash = hash_expr(self.update_expr)
-
         self.output = Function(V)
 
         self.interp_expr = None
@@ -36,21 +32,29 @@ class ForwardEulerTimeStepper:
         self.callable = None
         self._build_callable()
 
+    @property
+    def update_expr(self):
+        return self._update_expr
+
+    @update_expr.setter
+    def update_expr(self, expr):
+        self._update_expr = expr
+        self._callable_is_current = False
+
     def _build_callable(self):
         self.interp_expr = interpolate(self.update_expr, self.V) # symbolic interpolation expr
         self.interpolator = get_interpolator(self.interp_expr) # numerical interpolator
         self.callable = self.interpolator._get_callable(tensor=self.output)
+        self._callable_is_current = True
 
     def _check_callable_is_current(self):
-        # TODO: Make update expression a property with a boolean that sets to False upon update
-        current_hash = hash_expr(self.update_expr)
-        if current_hash != self.expr_hash:
-            self.expr_hash = current_hash
+        if not self._callable_is_current:
             self._build_callable()
 
     def step(self):
         global STEP_COUNT
         STEP_COUNT += 1
+        
         self._check_callable_is_current()
 
         # Execute existing ParLoops
@@ -79,5 +83,3 @@ class ForwardEulerTimeStepper:
 # Executing a ParLoop (when calling the callable) triggers:
 # ParLoop.__call__() -> ParLoop._compute() -> GlobalKernel.compile_global_kernel() at which point the kernel is looked up.
 # PyOP2 essentially defers kernel binding until execution because that depends on the iteration partition (core/owned/halo), communicator state etc.
-
-
