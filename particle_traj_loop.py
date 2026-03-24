@@ -9,8 +9,8 @@ from particle_time_stepper import ForwardEulerTimeStepper
 np.random.seed(42)
 
 t = 0.0 # current time
-dt = 0.2 # time step
-T = 0.2
+dt = 0.1 # time step
+T = 0.5
 
 def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters=50):
     """
@@ -226,17 +226,19 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
         # Now update the VOM by removing all boundary particles
         # i.e., particles that have hit an exterior boundary in one of the iterations above.
         # This operation causes the VOM topology to change.
-
-        # Rebuild the VOM given the updated particle positions
         new_phys_coords = assemble(interpolate(SpatialCoordinate(mesh), pmesh.coordinates.function_space()))
-        # TODO: Exchange occurs -> 2 sets of particles: absorbed (left mesh domain or partition boundary) + arrived
-        # Updates all fields eargely
-        # In particular, after calling rebuild_vom all functions and function spaces need to be rebuilt!
-        pmesh_updater.rebuild_vom(absorbed_vom_indices=boundary_particles, new_coords=new_phys_coords)
 
-        # VOM changes so parloops need to be rebuilt
-        stepper.invalidate()
-         
+        if len(boundary_particles) != 0:
+            # TODO: Trigger exchange: for each rank constructs 2 sets of particles: absorbed (left mesh domain or partition boundary) + arrived
+            pmesh_updater.rebuild_vom(absorbed_vom_indices=boundary_particles, new_coords=new_phys_coords)
+            # VOM changes so parloops need to be rebuilt
+            stepper.invalidate()
+            # TODO: Similarly, update/rebuild all fields eagerly
+        else:
+            # Write physical coordinates back
+            # This is simpler than calling pmesh_updater.update_vom()
+            pmesh.coordinates.dat.data_wo[:] = new_phys_coords.dat.data_ro
+
         # Only retain the ID of surviving particles
         keep_mask = np.ones(len(particle_ids), dtype=bool)
         keep_mask[boundary_particles] = False
@@ -325,7 +327,7 @@ if __name__=='__main__':
     V_io = VectorFunctionSpace(particle_vom.input_ordering, "DG", 0, dim=gdim)
     v = Function(V)
     v_io = Function(V_io)
-    input_velocities = np.random.normal(1, 0.5, size=(N,2)) 
+    input_velocities = np.random.normal(0.5, 0.5, size=(N,2)) 
     v_io.dat.data[:] = input_velocities
     v.interpolate(v_io)
     initial_particle_velocities = v.dat.data_ro.copy()
@@ -366,6 +368,9 @@ if __name__=='__main__':
 
 # NOTE:
 # Loop correctness when running in serial
-# Case 1: Single timestep (T=dt):
-# - Tiny velocity (0.02) + tiny time step (0.03) - No absorbed particles
-# - Larger velocity (1) + modest time step (0.2) - 2 absorbed particles
+# Case 1: Single time step (T=dt):
+# - v=0.02, dt=0.03 - No absorbed particles
+# - v=1, dt=0.2 - 2 absorbed particles
+#
+# Case 2: Multiple time steps
+# - v=0.5, dt=0.1, T=0.5

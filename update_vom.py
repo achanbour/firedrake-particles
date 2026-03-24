@@ -39,7 +39,7 @@ class VertexOnlyMeshUpdater:
         
         vom_coords_io = self.vom.input_ordering.coordinates
         new_coords_fn_io = assemble(interpolate(new_coords_fn, vom_coords_io.function_space()))
-        new_coords= new_coords_fn_io.dat.data_ro
+        new_coords = new_coords_fn_io.dat.data_ro
 
         tolerance = tolerance or self.parent_mesh.tolerance
 
@@ -445,9 +445,9 @@ class VertexOnlyMeshUpdater:
 
         3) Increment VOM version number to indicate that the VOM has changed.
         """
-        if absorbed_vom_indices is None or len(absorbed_vom_indices) == 0:
-            self.update(new_coords)
-            return
+        # if absorbed_vom_indices is None or len(absorbed_vom_indices) == 0:
+        #     self.update(new_coords)
+        #     return
 
         import firedrake.cython.dmcommon as dmcommon
         import firedrake.functionspace as functionspace
