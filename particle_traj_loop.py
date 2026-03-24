@@ -9,10 +9,10 @@ from particle_time_stepper import ForwardEulerTimeStepper
 np.random.seed(42)
 
 t = 0.0 # current time
-dt = 0.05 # time step
-T = 1
+dt = 0.03 # time step
+T = 0.03
 
-def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
+def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters=50):
     """
     Update particles in reference space using Forward Euler:
 
@@ -42,6 +42,9 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
         dt_trial_fn
     )
 
+    particle_ids = np.arange(pmesh.num_vertices())
+    removed_particles = []
+
     outer_time_loop = 0
     while t < T:
         N = pmesh.num_vertices()
@@ -52,7 +55,7 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
               f"N={N}"
         )
 
-        boundary_particles = [] # list to keep track of particles that hit the domain boundary
+        boundary_particles = [] # particles that hit the domain boundary in current time step
 
         # Define per-particle tracking loop variables
         dt_left = np.full(N, dt) # remaining time for the current time step
@@ -62,7 +65,7 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
         inner_loop_iter = 0
         active_iters = np.zeros(N, dtype=int)
 
-        while True:
+        while inner_loop_iter < max_inner_iters:
             # Ensure ref_coords_register holds the latest ref coords
             if not np.array_equal(ref_coords_register, ref_coords_fn.dat.data_ro):
                 ref_coords_register = ref_coords_fn.dat.data_ro.copy()
@@ -89,7 +92,7 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
             
             trial_ref_pos_fn = stepper.step()
 
-            # Compute barycentric coordinates at the old and new points
+            # Compute barycentric coordinates at the new positions
             bary_new = ref_cell.compute_barycentric_coordinates(trial_ref_pos_fn.dat.data_ro)
 
             # Split particles into passed/failed sets
@@ -182,6 +185,7 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
                             # Exterior boundary hit
                             new_parent_cells[global_i, 0] = parent_cell
                             boundary_particles.append(global_i)
+                            removed_particles.append(particle_ids[global_i])
                             dt_left[global_i] = 0.0
                             warnings.warn(f"Particle {global_i} attempted to cross an exterior boundary facet from cell {parent_cell}")
                         else:
@@ -200,6 +204,14 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
             # - recompute inverse Jacobian using new parent cell ownership (done at start of inner loop)
             # 5) Re-enter the inner loop with new ref. coords., parent cells and remaining dt_left
 
+        if inner_loop_iter == max_inner_iters:
+            still_active = np.where(dt_left > 0)[0]
+            print(
+                f"\n[warning] Inner loop hit max_inner_iters={max_inner_iters}. "
+                f"Still-active particles: {still_active}, dt_left: {dt_left[still_active]}\n"
+            )
+            break
+
         print()
         print("=" * 60)
         print("End of time step summary")
@@ -207,6 +219,7 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
         print(f"  Inner iterations to complete dt        : {inner_loop_iter}")
         print(f"  Active iterations per particle         : {active_iters}")
         print(f"  Boundary particles encountered         : {boundary_particles}")
+        # print(f"  Updated reference positions            : {pmesh.reference_coordinates.dat.data_ro} ")
         print("=" * 60)
         print()
 
@@ -218,11 +231,20 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0):
         new_phys_coords = assemble(interpolate(SpatialCoordinate(mesh), pmesh.coordinates.function_space()))
         # TODO: Exchange occurs -> 2 sets of particles: absorbed (left mesh domain or partition boundary) + arrived
         # Updates all fields eargely
-        pmesh_updater.rebuild_vom(absorbed_vom_indices=boundary_particles, new_coords=new_phys_coords.dat.data_ro)
+        # In particular, after calling rebuild_vom all functions and function spaces need to be rebuilt!
+        pmesh_updater.rebuild_vom(absorbed_vom_indices=boundary_particles, new_coords=new_phys_coords)
 
+        # VOM changes so parloops need to be rebuilt
+        stepper.invalidate()
+         
+        # Only retain the ID of surviving particles
+        keep_mask = np.ones(len(particle_ids), dtype=bool)
+        keep_mask[boundary_particles] = False
+        particle_ids = particle_ids[keep_mask]
+        
         t += dt
 
-    return t
+    return t, removed_particles
 
 def bisect_crossing_time_simd(
         stepper,
@@ -237,7 +259,7 @@ def bisect_crossing_time_simd(
     Instead of reconstructing midpoints using a hard-coded linear interpolation,
     this function evaluates midpoint positions by re-running the time stepping routine.
 
-    Returns crossing times and reference coordinates at the crossing point for failed particles.
+    Returns crossing times and reference coordinates at the crossing point for each failed particle.
     """
     n_failed = len(failed_global)
 
@@ -245,16 +267,11 @@ def bisect_crossing_time_simd(
     t_lo = np.zeros(n_failed, dtype=float)
     t_hi = dt_left[failed_global].copy()
 
-    # Define a DG0 timestep Function
-    # dt_mid_fn = Function(FS_vom)
+    # NOTE: bisection assumes that at t_lo = 0 all particles start inside their cells
 
     for _ in range(max_iters):
         t_mid = (t_lo + t_hi) / 2
-        # dt_mid_fn.dat.data[failed_global] = t_mid
 
-        # Instead of defining a brand-new function update the data the kernel reads
-        # This is fine because `dt_trial_fn` gets reset before the next step evaluation
-        # stepper.dt.dat.data[:] = 0
         stepper.dt.dat.zero()
         stepper.dt.dat.data_wo[failed_global] = t_mid
 
@@ -299,6 +316,7 @@ if __name__=='__main__':
     N = 10
     particle_coords = np.random.rand(N, 2)
     particle_vom = VertexOnlyMesh(mesh, particle_coords)
+    initial_particle_coords = particle_vom.coordinates.dat.data_ro.copy()
     gdim = particle_vom.geometric_dimension
     print("Initial particle positions (in primary VOM order): ", particle_vom.coordinates.dat.data_ro)
 
@@ -307,18 +325,24 @@ if __name__=='__main__':
     V_io = VectorFunctionSpace(particle_vom.input_ordering, "DG", 0, dim=gdim)
     v = Function(V)
     v_io = Function(V_io)
-    input_velocities = np.random.normal(-0.4, 0.15, size=(N,2))
+    input_velocities = np.random.normal(0.1, 0.5, size=(N,2)) # 0.2
     v_io.dat.data[:] = input_velocities
     v.interpolate(v_io)
+    initial_particle_velocities = v.dat.data_ro.copy()
 
     # Move particles in ref. space
     # import timeit
     with PETSc.Log.Event("ParticleTrajectoryLoop"):
         # t0 = timeit.default_timer()
-        T_final = move_particles_in_ref_space(particle_vom, mesh, v, dt, T, t=0.0)
+        T_final, removed_particles = move_particles_in_ref_space(particle_vom, mesh, v, dt, T, t=0.0)
         # t1 = timeit.default_timer()
         # print(f"[wall_time] {t1 - t0} s")
-    print("Final particle positions: ", particle_vom.coordinates.dat.data)
+    print("Final particle positions: ", particle_vom.coordinates.dat.data_ro)
+
+    # NOTE: why is input_ordering same as particle_vom??
+    # print("Final particle positions (IO): ", particle_vom.input_ordering.coordinates.dat.data_ro)
+
+    print("Removed particles: ", removed_particles)
 
     # from particle_time_stepper import STEP_COUNT
     # print("Total ForwardEulerTimeStepper calls: ", STEP_COUNT)
@@ -326,6 +350,15 @@ if __name__=='__main__':
     # from pyop2.caching import print_cache_stats
     # print_cache_stats()
     # replace by: PYOP2_CACHE_INFO=1
+
+    # exact_final_coords_io = particle_coords + T_final*input_velocities 
+    # print("Exact final particle positions (IO): ", exact_final_coords_io)
+
+    exact_final_coords = initial_particle_coords + T_final*initial_particle_velocities
+    print("Exact final particle positions: ", exact_final_coords)
+
+    # err = particle_vom.coordinates.dat.data_ro - exact_final_coords
+    # print("Max abs error: ", np.abs(err).max())
 
 # TODO:
 # - Check robustness of cell crossing with higher order mesh coordinate field

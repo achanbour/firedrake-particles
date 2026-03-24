@@ -32,8 +32,8 @@ class VertexOnlyMeshUpdater:
         NOTE: The `input_ordering` VOM does not currently get updated. It is cached when creating 
         the initial VOM, and our update function does not currently recreate it.
         This means that `input_ordering.coordinates` Function has DoFs at outdated points.
-        However, Functions and Function Spaces have no notion of coordinates; instead they depend on the
-        Geometry. So, interpolation into the input ordering VOM works as long as the points don't get reordered.
+        However, Functions and Function Spaces do not depend on coordinate field, instead they depend on the
+        Geometry of the mesh. So, interpolation into the input ordering VOM works as long as the points don't get reordered.
         """
         from firedrake import assemble, interpolate
         
@@ -137,8 +137,6 @@ class VertexOnlyMeshUpdater:
             remove_missing_points=False,
         )
 
-        # `_parent_mesh_embedding` expects data in input order
-
         return dict(
         coords=coords_embedded,
         parent_cells=parent_cell_nums,
@@ -149,74 +147,63 @@ class VertexOnlyMeshUpdater:
         input_indices=input_coords_idxs,
         missing_global_indices=missing_global_idxs,
     )
-
-    # def _compute_order(self, embedding):
-    #     swarm = self.vom.topology_dm
-    #     # Fixed particle IDs in the existing VOM ?
-    #     swarm_gid = swarm.getField("globalindex").reshape(-1)
-    #     swarm.restoreField("globalindex")
-    #     emb_gid = embedding["global_indices"]
-    #     inv = np.empty_like(emb_gid)
-    #     inv[emb_gid] = np.arange(len(emb_gid))
-
-    #     return inv[swarm_gid]
     
     def _update_dmswarm_fields(self, embedding):
         swarm = self.vom.topology_dm
         # print(swarm.fields)
 
-        # We cannot update the swarm fields by blindly assuming that the rows of embedding match the rows of the DMSwarm fields
-        # In particular, _parent_mesh_embedding and DMSwarm store point data in different order so we need a way to match them.
+        # NOTE: embedding and DMSwarm store points in different order.
+        # `_parent_mesh_embedding` returns particles in global index order (which corresponds to input order when redundant=True) 
+        # while swarm fields list particle data in swarm ordering
 
-        # swarm_gid = swarm.getField("globalindex").copy() # particle ID in the original VOM
-        # swarm.restoreField("globalindex") 
-        # emb_input = embedding["input_indices"] # map embedding ordering -> input ordering
-        # inv = np.empty_like(emb_input)
-        # inv[emb_input] = np.arange(len(emb_input))
-        # order = inv[swarm_gid]
-
-        # NOTE" Fields currently not updated:
-        # - DMSwarm_rank
-        # - globalindex (unique ID for each DMSwarm point)
-        # - inputrank (MPI rank at which the input point coordinates were supplied)
-        # - inputindex (index of each point in the input coordinates array after it has been redistributed to the correct rank)
+        # Remap the data between the two different orderings
+        # NOTE: This only works when `redundant=True` (serial or broadcast input)
+        swarm_gid = swarm.getField("globalindex").ravel() # for each swarm point: its original input index
+        emb_input = embedding["input_indices"] # for each embedding row: its original input index
+        inv =  np.empty(len(emb_input), dtype=int)
+        inv[emb_input] = np.arange(len(emb_input)) # for each input index: its embedding row
+        order = inv[swarm_gid] # for each swarm point k: its embedding row
+        swarm.restoreField("globalindex")
 
         # Physical coordinates
         arr = swarm.getField("DMSwarmPIC_coor")
         arr_field = embedding["coords"]
         arr_field = arr_field.reshape(len(arr_field), -1)
-        arr[:, :] = arr_field
+        arr[:, :] = arr_field[order]
         swarm.restoreField("DMSwarmPIC_coor")
 
-        # Firedrake parent cell ID
+        # Parent cells
         arr = swarm.getField("parentcellnum")
         arr_field = embedding["parent_cells"]
         arr_field = embedding["parent_cells"].reshape(len(arr_field), -1)
-        # print("old parentcellnum: ", arr)
-        # print("new parentcellnum: ", arr_field)
-        arr[:] = arr_field
+        arr[:] = arr_field[order]
         swarm.restoreField("parentcellnum")
 
         # The above field is different to swarm.getCellDMActive().getCellID()
         # which stores the parent cell numbers in DMSwarm numbering
-        # I think this is set to plex_parent_cell_nums
-        # so it must be recomputed?
+        # I believe this is set to the `plex_parent_cell_nums` swarm field 
 
-        # parent_mesh.topology.cell_closure maps cell numbers -> plex numbers
-        # plex_parent_cell_nums = self.parent_mesh.topology.cell_closure[
-        #     embedding["parent_cells"], -1
-        # ]
-        # plex_parent_cell_nums = plex_parent_cell_nums.reshape(len(plex_parent_cell_nums), -1)
-        # arr = swarm.getField(swarm.getCellDMActive().getCellID())
-        # arr[:, :] = plex_parent_cell_nums
-        # swarm.restoreField(swarm.getCellDMActive().getCellID())
+        # The `cell_closure` maps Firedrake cell numbers (new ordering) -> plex cell numbers (old ordering)
+        plex_parent_cell_nums = self.parent_mesh.topology.cell_closure[
+            arr_field[order], -1
+        ]
+        plex_parent_cell_nums = plex_parent_cell_nums.reshape(len(plex_parent_cell_nums), -1)
+        arr = swarm.getField(swarm.getCellDMActive().getCellID())
+        arr[:, :] = plex_parent_cell_nums
+        swarm.restoreField(swarm.getCellDMActive().getCellID())
 
-        # Reference coordinates (on reference cell)
+        # Reference coordinates
         arr = swarm.getField("refcoord")
         arr_field = embedding["refcoords"]
         arr_field = arr_field.reshape(len(arr_field), -1)
-        arr[:, :] = arr_field
+        arr[:, :] = arr_field[order]
         swarm.restoreField("refcoord")
+
+        # NOTE: Fields currently not updated:
+        # - DMSwarm_rank
+        # - globalindex (unique ID for each DMSwarm point)
+        # - inputrank (MPI rank at which the input point coordinates were supplied)
+        # - inputindex (index of each point in the input coordinates array after it has been redistributed to the correct rank)
 
         # TODO: build SF between primary swarm and updated swarm
     
@@ -255,7 +242,6 @@ class VertexOnlyMeshUpdater:
     def _update_coordinates(self, embedding):
         coords_embedded = embedding["coords"]
         refcoords_embedded = embedding["refcoords"]
-
         # This is wrong since the coords are reordered before being passed to the coordinate functions
 
         # Update physical coordinates (DG0 on vom)
@@ -270,11 +256,6 @@ class VertexOnlyMeshUpdater:
 
         topology = self.vom.topology
         parent_tdim = self.parent_mesh.topological_dimension
-
-        # we don't need the embedding dict anymore since the data is already stored in `topology_dm`
-
-        # NOTE: `reordered_coords` does not change the ordering of points in the DMSwarm or in the VOM
-        # it merely reorders the coords. data to match the FS layout
 
         # Update ref. coords.
         ref_coords_func = self.vom.reference_coordinates
@@ -303,7 +284,7 @@ class VertexOnlyMeshUpdater:
 
         1) Embedd the coordinates of the current VOM and mark absorbed points as 'missing'.
         Extended to allow the embedding of updated coordinates if provided. 
-        `new_coords` is assumed to contain the new coordinates of all points including the absorbed ones and listed in current VOM ordering.
+        `new_coords` is assumed to contain the new coordinates of all points including the absorbed ones.
 
         2) Rebuild a new DMSwarm with only visible points.
 
@@ -325,7 +306,8 @@ class VertexOnlyMeshUpdater:
             raise NotImplementedError("Rebuilding the VOM topology uses globalindex as persistent point IDs, so `redundant=True` is required.")
         
         absorbed_vom_indices = np.asarray(absorbed_vom_indices, dtype=int) # assumed to index into current VOM ordering
-        coords_to_embedd = new_coords if new_coords is not None else self.vom.coordinates.dat.data_ro # coordinates to embedd (in current VOM)
+
+        coords_to_embedd = new_coords.dat.data_ro if new_coords is not None else self.vom.coordinates.dat.data_ro # coordinates to embedd (in current VOM)
 
         # 1. Embed current VOM coordinates
         tolerance = tolerance or self.parent_mesh.tolerance
@@ -463,6 +445,10 @@ class VertexOnlyMeshUpdater:
 
         3) Increment VOM version number to indicate that the VOM has changed.
         """
+        if absorbed_vom_indices is None or len(absorbed_vom_indices) == 0:
+            self.update(new_coords)
+            return
+
         import firedrake.cython.dmcommon as dmcommon
         import firedrake.functionspace as functionspace
         import firedrake.functionspaceimpl as functionspaceimpl

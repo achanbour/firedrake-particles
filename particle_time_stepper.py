@@ -10,26 +10,23 @@ class ForwardEulerTimeStepper:
         self.v = v
         self.dt = dt
 
-        V = X.function_space()
-        self.V = V
-
         # All terms are assumed to be Functions
-        # So we check they're all defined on the same mesh (particle VOM)
-        m = V.mesh()
+        # Check they're all defined on the same mesh (particle VOM)
+        m = self.X.function_space().mesh()
         assert invJ.function_space().mesh() == m
         assert dt.function_space().mesh() == m
 
-        # v could be an expression on the VOM OR parent mesh
+        # NOTE: in general, v could be an expression on the VOM OR parent mesh
+        # For now, we assume it's a function of the VOM
         assert v.function_space().mesh() == m
         
         # Forward Euler update expression (in ref. space)
         self.update_expr = X + invJ * v * dt
 
-        self.output = Function(V)
-
         self.interp_expr = None
         self.interpolator = None
         self.callable = None
+
         self._build_callable()
 
     @property
@@ -40,11 +37,14 @@ class ForwardEulerTimeStepper:
     def update_expr(self, expr):
         self._update_expr = expr
         self._callable_is_current = False
+    
+    def invalidate(self):
+        self._callable_is_current = False
 
     def _build_callable(self):
-        self.interp_expr = interpolate(self.update_expr, self.V) # symbolic interpolation expr
+        self.interp_expr = interpolate(self.update_expr, self.X.function_space()) # symbolic interpolation expr
         self.interpolator = get_interpolator(self.interp_expr) # numerical interpolator
-        self.callable = self.interpolator._get_callable(tensor=self.output)
+        self.callable = self.interpolator._get_callable() # parloops
         self._callable_is_current = True
 
     def _check_callable_is_current(self):
@@ -57,7 +57,7 @@ class ForwardEulerTimeStepper:
         
         self._check_callable_is_current()
 
-        # Execute existing ParLoops
+        # Execute cached ParLoops
         result = self.callable()
         return result
 
