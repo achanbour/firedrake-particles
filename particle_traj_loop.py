@@ -33,10 +33,8 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
     FS_vom = FunctionSpace(pmesh, "DG", 0) # Scalar FS for per-particle time steps
     dt_trial_fn = Function(FS_vom)
 
-    ref_coords_fn = pmesh.reference_coordinates # current reference coordinates
-
     stepper = ForwardEulerTimeStepper(
-        ref_coords_fn,
+        pmesh.reference_coordinates,
         invJ_vom,
         v_fn,
         dt_trial_fn
@@ -59,29 +57,24 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
 
         # Define per-particle tracking loop variables
         dt_left = np.full(N, dt) # remaining time for the current time step
-        ref_coords_register = ref_coords_fn.dat.data_ro.copy() # array to store updating ref. coords.
+        ref_coords_register = pmesh.reference_coordinates.dat.data_ro.copy() # array to store updating ref. coords.
 
         # Run inner loop while there are active particles (those that have not yet finished their dt)
         inner_loop_iter = 0
         active_iters = np.zeros(N, dtype=int)
 
         while inner_loop_iter < max_inner_iters:
-            # Ensure ref_coords_register holds the latest ref coords
-            if not np.array_equal(ref_coords_register, ref_coords_fn.dat.data_ro):
-                ref_coords_register = ref_coords_fn.dat.data_ro.copy()
 
             # Check if there are any active particles left
             active = dt_left > 0
             if not np.any(active):
                 break
 
+            # Process active particles
             inner_loop_iter += 1
             active_indices = np.where(active)[0]
             active_iters[active_indices] += 1
 
-            # Process active particles
-            # NOTE: this line enforces that dt_left indexes particles in VOM ordering 
-            # i.e., dt_left[i] corresponds to VOM particle i
             stepper.dt.dat.zero()
             stepper.dt.dat.data_wo[active_indices] = dt_left[active_indices]
             
@@ -90,6 +83,7 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
             # between iterations of the inner loop.
             invJ_vom.interpolate(invJ_expr)
             
+            # Get updated reference positions using the full time step
             trial_ref_pos_fn = stepper.step()
 
             # Compute barycentric coordinates at the new positions
@@ -231,9 +225,13 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
         if len(boundary_particles) != 0:
             # TODO: Trigger exchange: for each rank constructs 2 sets of particles: absorbed (left mesh domain or partition boundary) + arrived
             pmesh_updater.rebuild_vom(absorbed_vom_indices=boundary_particles, new_coords=new_phys_coords)
+            
             # VOM changes so parloops need to be rebuilt
-            stepper.invalidate()
-            # TODO: Similarly, update/rebuild all fields eagerly
+            # stepper.invalidate()
+
+            # Similarly, update/rebuild all fields eagerly
+            # and ensure stepper stores the updated fields!
+            stepper.X = pmesh.reference_coordinates
         else:
             # Write physical coordinates back
             # This is simpler than calling pmesh_updater.update_vom()

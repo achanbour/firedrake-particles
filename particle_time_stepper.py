@@ -5,14 +5,14 @@ STEP_COUNT = 0
 
 class ForwardEulerTimeStepper:
     def __init__(self, X, invJ, v, dt):
-        self.X = X
-        self.invJ = invJ
-        self.v = v
-        self.dt = dt
+        self._X = X
+        self._invJ = invJ
+        self._v = v
+        self._dt = dt
 
         # All terms are assumed to be Functions
         # Check they're all defined on the same mesh (particle VOM)
-        m = self.X.function_space().mesh()
+        m = X.function_space().mesh()
         assert invJ.function_space().mesh() == m
         assert dt.function_space().mesh() == m
 
@@ -30,13 +30,52 @@ class ForwardEulerTimeStepper:
         self._build_callable()
 
     @property
+    def X(self):
+        return self._X
+    
+    @property
+    def invJ(self):
+        return self._invJ
+    
+    @property
+    def v(self):
+        return self._v
+    
+    @property
+    def dt(self):
+        return self._dt
+
+    @property
     def update_expr(self):
         return self._update_expr
 
+    @X.setter
+    def X(self, value):
+        self._X = value
+        self._rebuild_update_expr()
+
+    @invJ.setter
+    def invJ(self, value):
+        self._invJ = value
+        self._rebuild_update_expr()
+
+    @v.setter
+    def v(self, value):
+        self._v = value
+        self._rebuild_update_expr()
+
+    @dt.setter
+    def dt(self, value):
+        self._dt = value
+        self._rebuild_update_expr()
+
+    def _rebuild_update_expr(self):
+        self.update_expr = self._X + self._invJ * self._v * self._dt
+        
     @update_expr.setter
     def update_expr(self, expr):
         self._update_expr = expr
-        self._callable_is_current = False
+        self.invalidate()
     
     def invalidate(self):
         self._callable_is_current = False
@@ -52,8 +91,8 @@ class ForwardEulerTimeStepper:
             self._build_callable()
 
     def step(self):
-        global STEP_COUNT
-        STEP_COUNT += 1
+        # global STEP_COUNT
+        # STEP_COUNT += 1
         
         self._check_callable_is_current()
 
