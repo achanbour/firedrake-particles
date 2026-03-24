@@ -9,8 +9,8 @@ from particle_time_stepper import ForwardEulerTimeStepper
 np.random.seed(42)
 
 t = 0.0 # current time
-dt = 0.03 # time step
-T = 0.03
+dt = 0.2 # time step
+T = 0.2
 
 def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters=50):
     """
@@ -325,7 +325,7 @@ if __name__=='__main__':
     V_io = VectorFunctionSpace(particle_vom.input_ordering, "DG", 0, dim=gdim)
     v = Function(V)
     v_io = Function(V_io)
-    input_velocities = np.random.normal(0.1, 0.5, size=(N,2)) # 0.2
+    input_velocities = np.random.normal(1, 0.5, size=(N,2)) 
     v_io.dat.data[:] = input_velocities
     v.interpolate(v_io)
     initial_particle_velocities = v.dat.data_ro.copy()
@@ -363,3 +363,9 @@ if __name__=='__main__':
 # TODO:
 # - Check robustness of cell crossing with higher order mesh coordinate field
 # - End of particle loop: halo exchange + update all fields eagerly
+
+# NOTE:
+# Loop correctness when running in serial
+# Case 1: Single timestep (T=dt):
+# - Tiny velocity (0.02) + tiny time step (0.03) - No absorbed particles
+# - Larger velocity (1) + modest time step (0.2) - 2 absorbed particles
