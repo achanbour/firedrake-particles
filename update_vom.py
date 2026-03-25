@@ -328,6 +328,7 @@ class VertexOnlyMeshUpdater:
             exclude_halos,
             remove_missing_points=False
         )
+
         # Treat absorbed_vom_indices as missing points by overriding the outputs of _parent_mesh_embedding
         # Assuming serial + redundant input_coords_idxs_local is in the range 0,...,N_old-1
         # it corresponds to the indices of points in the coordinates array that was embedded (assumed to be the full array of points, including the missing ones)
@@ -404,16 +405,51 @@ class VertexOnlyMeshUpdater:
         new_input_ordering_swarm.setPointSF(sf)
 
         # --Create new VOM topology around the new DMSwarm--
+        old_topology = self.vom.topology
+
         new_topology = VertexOnlyMeshTopology(
             new_swarm,
             self.parent_mesh.topology,
             name=new_swarm.getName() if new_swarm.getName() else "vom_topology_rebuild",
-            reorder=True,
+            reorder=False,
             input_ordering_swarm=new_input_ordering_swarm,
         )
 
+        # NOTE: Old SF mapping
+        # Build SF mapping from the new VOM (version k) back to the previous VOM (version k-1)
+        # using the persistent DMSwarm "globalindex" IDs as the invariant key.
+        # This SF will be used by Function._match_mesh_topology_version to migrate function data correctly
+        # when particles are removed (so the new index i maps to the old index pid_to_old[pid_i]).
+        # from firedrake.petsc import PETSc
+        # from firedrake.utils import IntType
+
+        # # Old VOM: pid (input index) per VOM vertex
+        # old_swarm = old_topology.topology_dm
+        # old_pids = old_swarm.getField("globalindex").ravel()
+        # old_swarm.restoreField("globalindex")
+        # old_vom_to_swarm = old_topology.cell_closure[:, -1]
+        # pids_old_order = old_pids[old_vom_to_swarm]
+
+        # # New VOM: pid per vertex
+        # new_swarm = new_topology.topology_dm
+        # new_pids = new_swarm.getField("globalindex").ravel()
+        # new_swarm.restoreField("globalindex")
+        # new_vom_to_swarm = new_topology.cell_closure[:, -1]
+        # pids_new_order = new_pids[new_vom_to_swarm]
+
+        # pid_to_old = {pid: i for i, pid in enumerate(pids_old_order)}
+        # roots = np.array([pid_to_old[pid] for pid in pids_new_order], dtype=IntType)
+        # nleaves = len(pids_new_order)
+        # remote = np.empty(2 * nleaves, dtype=IntType)
+        # remote[0::2] = 0 
+        # remote[1::2] = roots
+
+        # sf_new_to_old = PETSc.SF().create(comm=self.parent_mesh.comm)
+        # sf_new_to_old.setGraph(old_topology.num_vertices(), None, remote)
+        # sf_new_to_old.setUp()
+
+        # NOTE: Old point mapping
         # --Build an explicit old VOM->new VOM point mapping--
-        # TODO: Use SF instead of explicit mapping
         # using a persistent point ID that does not depend on the VOM ordering
         # `globalindex` works only if `redundant=True` since otherwise the globalindex is rank-dependent.
         # new_vom_to_swarm = new_topology.cell_closure[:, -1] # map new VOM index -> new swarm point ID
@@ -537,10 +573,7 @@ class VertexOnlyMeshUpdater:
         self.vom._saved_coordinate_dat_version = self.vom.coordinates.dat.dat_version
 
         # --Increment VOM version number--
-        # Introduce a `._version` attribute on a MeshGeometry object
         # TODO: this has to be a collective operation
-        # self.vom._topology_version += 1
-
         if not hasattr(self.vom, "_topology_version"):
             self.vom._topology_version = 0
         self.vom._topology_version += 1
@@ -549,9 +582,8 @@ class VertexOnlyMeshUpdater:
         # This is done lazily, i.e., the first time the VOM gets rebuilt.
         if not hasattr(self.vom, "_topology_step_sfs"):
             self.vom._topology_step_sfs = {}
-        
-        # One step SF maps version k (new) -> version k-1 (old) stored under the key k
-        self.vom._topology_step_sfs[self.vom._topology_version] = self.vom.input_ordering_sf 
+
+        # One-step SF maps version k (new) -> version k-1 (old) stored under the key k
+        self.vom._topology_step_sfs[self.vom._topology_version] = self.vom.input_ordering_sf  
 
         return self.vom
-

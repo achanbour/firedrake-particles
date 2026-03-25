@@ -73,8 +73,8 @@ class ForwardEulerTimeStepper:
         self.update_expr = self._X + self._invJ * self._v * self._dt
         
     @update_expr.setter
-    def update_expr(self, expr):
-        self._update_expr = expr
+    def update_expr(self, value):
+        self._update_expr = value
         self.invalidate()
     
     def invalidate(self):
