@@ -138,7 +138,7 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
                 dt_left[failed_global] -= t_cross
                 print("\n   failed set info:")
                 print(f"        dt_left: {dt_left[failed_global]}")
-                print(f"        new ref coords (in original cell): {X_cross}")
+                print(f"        new ref coords (at crossing in original cell): {X_cross}")
             
                 # From the barycentric coords. at the crossing point, determine which edge the particle crossed
                 local_crossed_edge_ids = np.full(len(active_indices), None, dtype=object)
@@ -147,8 +147,7 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
 
                     # Catch the degenerate case when a particle lands on a vertex
                     # two barycentric coords are 0 so argmin is ambiguous
-                    eps = 1e-12
-                    near_zero = abs(bary_cross[idx]) < eps
+                    near_zero = abs(bary_cross[idx]) < 1e-12
                     if np.count_nonzero(near_zero) >= 2:
                         warnings.warn(
                             f"Degenerate crossing: particle landed on a vertex.\n"
@@ -251,15 +250,12 @@ def bisect_crossing_time(
         dt_left,
         ref_cell, 
         failed_global,
-        bary_tol=1e-5,
+        bary_tol=1e-12,
         time_tol=1e-6,
         max_iters=30
 ):
-    """SIMD-style bisection algorithm that detects particle crossings.
+    """Bisection algorithm that detects particle crossings.
     
-    Instead of reconstructing midpoints using a hard-coded linear interpolation,
-    this function evaluates midpoint positions by re-running the time stepping routine.
-
     Returns crossing times and reference coordinates at the crossing point for each failed particle.
     """
     n_failed = len(failed_global)
@@ -268,7 +264,11 @@ def bisect_crossing_time(
     t_lo = np.zeros(n_failed, dtype=float)
     t_hi = dt_left[failed_global].copy()
 
-    # NOTE: bisection assumes that at t_lo = 0 all particles start inside their cells
+    # NOTE: bisection assumes that initially (at t_lo=0) all particles start inside their cells
+    # If a particle happens to start on a vertex, bisection returns t_cross = 0 which means that
+    # X_cross is equal to the position the particle started on.
+    # Using a high barycentric tolerance may allow for a particle that's slightly outside to be considered as inside the cell
+    # so we use a low tolerance to avoid this.
 
     for _ in range(max_iters):
         t_mid = (t_lo + t_hi) / 2

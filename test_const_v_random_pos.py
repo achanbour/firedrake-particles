@@ -55,8 +55,6 @@ print("Removed particles: ", removed_particles)
 # exact_final_coords_io = particle_coords + T_final*input_velocities 
 # print("Exact final particle positions (IO): ", exact_final_coords_io)
 
-print("T_final: ", T_final)
-
 exact_final_coords = initial_particle_coords + T_final*initial_particle_velocities
 keep = np.ones(exact_final_coords.shape[0], dtype=bool)
 keep[removed_particles] = False
