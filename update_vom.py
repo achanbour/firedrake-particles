@@ -512,7 +512,7 @@ class VertexOnlyMeshUpdater:
         #     "old_to_new_point_mapping": old_to_new_point_mapping,
         # }
 
-        # --Build a new MeshGeometry object around the new topology--
+        # --Build a new temporary MeshGeometry object around the new topology--
         tolerance = getattr(self.vom, "_tolerance", self.parent_mesh.tolerance)
         new_mesh_geometry = make_vom_from_vom_topology(new_vom_topology, self.vom.name, tolerance)
 
@@ -522,20 +522,28 @@ class VertexOnlyMeshUpdater:
         # Hence, the mutable properties of a MeshGeometry object are stored in a ufl_cargo() which is intended to store non-symbolic states without breaking UFL's expectations about the mesh object.
         new_mesh_geometry._parent_mesh = self.parent_mesh
 
-        # --Transfer the new topology into the existing mesh (MeshGeometry) object--
+        # --Transfer the new topology into the old MeshGeometry object--
         self.vom.topology = new_vom_topology
         self.vom._parent_mesh = self.parent_mesh
         self.vom._tolerance = tolerance
 
         # --Transfer the new coordinates into the VOM--
-        # NOTE: the mesh coordinate field defines the geometry of the mesh. Therefore, it is defined as a CoordinatelessFunction (as opposed to a Function WithGeometry)
+        # NOTE: The mesh coordinate field defines the geometry of the mesh. Therefore, it is defined as a CoordinatelessFunction (as opposed to a WithGeometry)
         # This means that its function space is built entirely from the mesh topology and the element type, and is not bound to a geometry object.
         # A `CoordinatelessFunction(V, ..)` lives on a function space `V` whose DM/Section specifies how many DoFs there are and how they're arranged. It does not carry a reference to a mesh (`MeshGeometry` object).
         # So `_coordinates` is just a vector of numbers laid out in the FS DoF layout. It can exist independently of the mesh.
-        # When we access the `mesh.coordinates` field, Firedrake wraps that coordinateless fucnction in a `WithGeometry` function which binds it to the mesh geometry. This allows UFL to treat it as a spatial coordinate field.
+        # When we access the `mesh.coordinates` field, Firedrake wraps that coordinateless fucnction in a `WithGeometry` function which binds it to the mesh geometry.
 
-        self.vom._coordinates = new_mesh_geometry._coordinates
-        self.vom._coordinates_function = new_mesh_geometry._coordinates_function
+        # CoordinatelessFunction
+        # NOTE: Should we update the cached mesh geometry on the coordinateless function? If so why?
+        new_mesh_geometry._coordinates._as_mesh_geometry = self.vom._coordinates._as_mesh_geometry # Set weak ref to the original mesh object
+        self.vom._coordinates = new_mesh_geometry._coordinates 
+        
+        # Function (WithGeometry)
+        # self.vom._coordinates_function = new_mesh_geometry._coordinates_function
+        # Rebind new topological FS to old MeshGeometry object
+        V = functionspaceimpl.WithGeometry(new_mesh_geometry._coordinates.function_space(), self.vom)
+        self.vom._coordinates_function = function.Function(V, val=new_mesh_geometry._coordinates)
 
         # Remove cached `coordinates` so they are rebuilt from the new topology.
         if "coordinates" in self.vom.__dict__:

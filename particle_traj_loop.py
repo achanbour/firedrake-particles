@@ -258,9 +258,6 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
         # i.e., particles that have hit an exterior boundary in one of the iterations above.
         # This operation causes the VOM topology to change.
         new_phys_coords = assemble(interpolate(SpatialCoordinate(mesh), pmesh.coordinates.function_space()))
-        
-        if t == 0.04:
-            print("new phys coord [t=0.04]:", new_phys_coords.dat.data_ro)
 
         if len(boundary_particles) != 0:
             # TODO: Trigger exchange: for each rank constructs 2 sets of particles: absorbed (left mesh domain or partition boundary) + arrived
