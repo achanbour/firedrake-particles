@@ -10,7 +10,7 @@ np.random.seed(42)
 
 t = 0.0 # current time
 dt = 0.01 # time step
-T = 0.05
+T = 0.06
 
 def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters=50):
     """
@@ -54,13 +54,6 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
               f"N={N}"
         )
 
-        # if t == 0.04:
-        #     print("=== POST-REBUILD TERMS ===")
-        #     print("N particles:", pmesh.num_vertices())
-        #     print("ref coords:\n", pmesh.reference_coordinates.dat.data_ro)
-        #     print("parent cells:\n", pmesh.topology.cell_parent_cell_list)
-        #     print("velocities:\n", stepper.v.dat.data_ro)
-
         boundary_particles = [] # particles that hit the domain boundary in current time step
 
         dt_left = np.full(N, dt) # remaining time for the current time step
@@ -85,8 +78,7 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
             stepper.dt.dat.data_wo[active_indices] = dt_left[active_indices]
             
             # Recompute invJ on the CURRENT embedding
-            # This is is done here rather than in the outer loop as cell ownership changes
-            # between iterations of the inner loop.
+            # This is is done here rather than in the outer loop as cell ownership changes within the inner loop
             invJ_vom.interpolate(invJ_expr)
 
             # if t == 0.04 and inner_loop_iter == 1:
@@ -96,32 +88,6 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
             # Get updated reference positions using the full time step
             trial_ref_pos_fn = stepper.step()
             print("trial ref pos: ", trial_ref_pos_fn.dat.data_ro)
-
-            # if t == 0.04 and inner_loop_iter == 1:
-            #     # Compare cached stepper result with fresh interpolation
-            #     print("trial ref pos: ", trial_ref_pos_fn.dat.data_ro)
-
-            #     X_fresh = pmesh.reference_coordinates
-            #     TFS_fresh = TensorFunctionSpace(pmesh, "DG", 0)
-            #     FS_fresh = FunctionSpace(pmesh, "DG", 0)
-            #     V_fresh = VectorFunctionSpace(pmesh, "DG", 0, dim=mesh.geometric_dimension)
-
-            #     invJ_fresh = Function(TFS_fresh)
-            #     dt_fresh = Function(FS_fresh)
-            #     v_fresh = Function(V_fresh)
-
-            #     invJ_fresh.interpolate(invJ_expr)
-            #     dt_fresh.dat.data[:] = 0.0
-            #     dt_fresh.dat.data[active_indices] = dt_left[active_indices]
-            #     v_fresh.dat.data[:] = stepper.v.dat.data_ro
-
-            #     fresh_trial_ref_pos_fn = assemble(interpolate(
-            #         1*(X_fresh + invJ_fresh * v_fresh * dt_fresh),
-            #         X_fresh.function_space()
-            #     ))
-
-            #     print("expected trial ref pos: ", fresh_trial_ref_pos_fn.dat.data_ro)
-            #     print(np.allclose(trial_ref_pos_fn.dat.data_ro, fresh_trial_ref_pos_fn.dat.data_ro))
 
             # Compute barycentric coordinates at the new positions
             bary_new = ref_cell.compute_barycentric_coordinates(trial_ref_pos_fn.dat.data_ro)
@@ -264,11 +230,11 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
             pmesh_updater.rebuild_vom(absorbed_vom_indices=boundary_particles, new_coords=new_phys_coords)
             
             # NOTE: Inspect whether the VOM relative ordering is preserved during rebuild
-            # That should in principle always be the case at least with `reorder=False` and `redundant=True`
+            # That should in principle always be the case when reconstructing the VOM with `reorder=False` and `redundant=True`
             # since _parent_mesh_embedding returns points in input ordering 
             # and the input ordering corresponds to the old VOM ordering
             # Old VOM: [0,1,2,3,4,5,6,7,8,9] -> New VOM: [0,1,2,3,4,6,7,8,9] with new indices [0,1,2,4,5,6,7,8]
-            # In parallel, `_parent_mesh_embedding` scatters points across ranks breaking this assumption.
+            # In parallel, this assumption may no longer hold as `_parent_mesh_embedding` scatters points across ranks.
             new_swarm = pmesh.topology_dm
             new_pids = new_swarm.getField("globalindex").ravel().copy() # input index of each particle
             new_swarm.restoreField("globalindex")
@@ -299,19 +265,6 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
             # Write physical coordinates back
             # This is simpler than calling pmesh_updater.update_vom()
             pmesh.coordinates.dat.data_wo[:] = new_phys_coords.dat.data_ro
-
-        # Dump the data computed in the last iteration to disk
-        # if t+dt >= T:
-        #     last_iter_dats = {
-        #         "x": pmesh.coordinates.dat.data_ro,
-        #         "x_ref": pmesh.reference_coordinates.dat.data_ro,
-        #         "invJ": stepper.invJ.dat.data_ro,
-        #         "v": stepper.v.dat.data_ro,
-        #         "dt": stepper.dt.dat.data_ro
-        #     }
-        #     import pickle
-        #     with open("particle_loop_dats.pickle", "wb") as output_file:
-        #         pickle.dump(last_iter_dats, output_file)
 
         t += dt
 
@@ -413,7 +366,7 @@ if __name__=='__main__':
     print("Final particle positions: ", particle_vom.coordinates.dat.data_ro)
 
     print("Removed particles: ", removed_particles)
-
+    
     # from particle_time_stepper import STEP_COUNT
     # print("Total ForwardEulerTimeStepper calls: ", STEP_COUNT)
 
@@ -435,21 +388,3 @@ if __name__=='__main__':
 # - Check robustness of cell crossing with higher order mesh coordinate field
 # - End of particle loop: halo exchange + update all fields eagerly
 
-# NOTE:
-# Loop correctness when running in serial
-# Single time step (T=dt):
-# - v=0.02, dt=0.03 - No absorbed particles
-# - v=1, dt=0.2 - 2 absorbed particles
-# Both experiments give exact results
-
-# Case 2: Multiple time steps
-# - v=0.01, dt=0.01
-#   Single time step: no absorbed particles, close to exact results
-#   Two time steps: no absorbed particles, close to exact results
-#   Three time steps: no absorbed particles, close to exact results
-#   Four time steps: one absorbed particle, close to exact but last two particles flipped?
-#       Rebuild VOM setting reorder=False
-#   Five time steps: executing the trajectory loop on the rebuilt VOM from iteration four 
-#   results in a significant drift from the expected results
-
-# - v=0.5, dt=0.1, T=0.5, h=10
