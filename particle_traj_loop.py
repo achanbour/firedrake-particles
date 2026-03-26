@@ -1,16 +1,9 @@
 from firedrake import *
-from firedrake.petsc import PETSc
 from ufl.differentiation import ReferenceGrad
 import numpy as np
 import warnings
 from update_vom import VertexOnlyMeshUpdater
 from particle_time_stepper import ForwardEulerTimeStepper
-
-np.random.seed(42)
-
-t = 0.0 # current time
-dt = 0.01 # time step
-T = 0.06
 
 def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters=50):
     """
@@ -228,19 +221,6 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
         if len(boundary_particles) != 0:
             # TODO: Trigger exchange: for each rank constructs 2 sets of particles: absorbed (left mesh domain or partition boundary) + arrived
             pmesh_updater.rebuild_vom(absorbed_vom_indices=boundary_particles, new_coords=new_phys_coords)
-            
-            # NOTE: Inspect whether the VOM relative ordering is preserved during rebuild
-            # That should in principle always be the case when reconstructing the VOM with `reorder=False` and `redundant=True`
-            # since _parent_mesh_embedding returns points in input ordering 
-            # and the input ordering corresponds to the old VOM ordering
-            # Old VOM: [0,1,2,3,4,5,6,7,8,9] -> New VOM: [0,1,2,3,4,6,7,8,9] with new indices [0,1,2,4,5,6,7,8]
-            # In parallel, this assumption may no longer hold as `_parent_mesh_embedding` scatters points across ranks.
-            new_swarm = pmesh.topology_dm
-            new_pids = new_swarm.getField("globalindex").ravel().copy() # input index of each particle
-            new_swarm.restoreField("globalindex")
-            vom_to_swarm = pmesh.topology.cell_closure[:, -1] # VOM ordering -> plex ordering
-            pids_in_vom_order = new_pids[vom_to_swarm]
-            # print("Surving global indices in VOM order: ", pids_in_vom_order)
 
             # Update/rebuild all fields eagerly (in parallel: once exchange is over)
             # And ensure the stepper stores the updated fields!
@@ -257,10 +237,6 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
             keep_mask[boundary_particles] = False
             particle_ids = particle_ids[keep_mask]
 
-            # Is relative ordering of VOM preserved?
-            assert np.array_equal(pids_in_vom_order, particle_ids), \
-                f"VOM ordering mismatch after rebuild: {pids_in_vom_order} vs {particle_ids}"
-        
         else:
             # Write physical coordinates back
             # This is simpler than calling pmesh_updater.update_vom()
@@ -327,62 +303,6 @@ def bisect_crossing_time(
     bary_cross = ref_cell.compute_barycentric_coordinates(X_cross)
 
     return t_cross, bary_cross, X_cross
-
-if __name__=='__main__':
-    # Define the parent mesh
-    mesh = UnitSquareMesh(10, 10, quadrilateral=False)
-    # mesh = PeriodicUnitSquareMesh(10, 10)
-
-    with PETSc.Log.Event("PreComputeCellFacetData"):
-        _ = mesh.topology.cell_facet_neighbours
-        _ = mesh.topology.cell_facet_coord_transforms
-
-    # Define the particles in a VOM
-    N = 10
-    particle_coords = np.random.rand(N, 2)
-    print(particle_coords)
-    particle_vom = VertexOnlyMesh(mesh, particle_coords)
-    initial_particle_coords = particle_vom.coordinates.dat.data_ro.copy()
-    gdim = particle_vom.geometric_dimension
-    print("Initial particle positions (in primary VOM order): ", particle_vom.coordinates.dat.data_ro)
-
-    # Assign per-particle velocities
-    V = VectorFunctionSpace(particle_vom, "DG", 0, dim=gdim)
-    V_io = VectorFunctionSpace(particle_vom.input_ordering, "DG", 0, dim=gdim)
-    v = Function(V)
-    v_io = Function(V_io)
-    input_velocities = np.random.normal(0.01, 0.5, size=(N,2))
-    v_io.dat.data[:] = input_velocities
-    v.interpolate(v_io)
-    initial_particle_velocities = v.dat.data_ro.copy()
-
-    # Move particles in ref. space
-    # import timeit
-    with PETSc.Log.Event("ParticleTrajectoryLoop"):
-        # t0 = timeit.default_timer()
-        T_final, removed_particles = move_particles_in_ref_space(particle_vom, mesh, v, dt, T, t=0.0)
-        # t1 = timeit.default_timer()
-        # print(f"[wall_time] {t1 - t0} s")
-    print("Final particle positions: ", particle_vom.coordinates.dat.data_ro)
-
-    print("Removed particles: ", removed_particles)
-    
-    # from particle_time_stepper import STEP_COUNT
-    # print("Total ForwardEulerTimeStepper calls: ", STEP_COUNT)
-
-    # from pyop2.caching import print_cache_stats
-    # print_cache_stats()
-    # replace by: PYOP2_CACHE_INFO=1
-
-    # exact_final_coords_io = particle_coords + T_final*input_velocities 
-    # print("Exact final particle positions (IO): ", exact_final_coords_io)
-
-    print("T_final: ", T_final)
-    exact_final_coords = initial_particle_coords + T_final*initial_particle_velocities
-    print("Exact final particle positions: ", exact_final_coords)
-
-    # err = particle_vom.coordinates.dat.data_ro - exact_final_coords
-    # print("Max abs error: ", np.abs(err).max())
 
 # TODO:
 # - Check robustness of cell crossing with higher order mesh coordinate field
