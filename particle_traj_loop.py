@@ -10,7 +10,7 @@ np.random.seed(42)
 
 t = 0.0 # current time
 dt = 0.01 # time step
-T = 0.04
+T = 0.05
 
 def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters=50):
     """
@@ -88,9 +88,14 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
             # This is is done here rather than in the outer loop as cell ownership changes
             # between iterations of the inner loop.
             invJ_vom.interpolate(invJ_expr)
+
+            # if t == 0.04 and inner_loop_iter == 1:
+            #     # Inspect stepper's callable closure to print parloop args
+            #     breakpoint()
             
             # Get updated reference positions using the full time step
             trial_ref_pos_fn = stepper.step()
+            print("trial ref pos: ", trial_ref_pos_fn.dat.data_ro)
 
             # if t == 0.04 and inner_loop_iter == 1:
             #     # Compare cached stepper result with fresh interpolation
@@ -253,6 +258,9 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
         # i.e., particles that have hit an exterior boundary in one of the iterations above.
         # This operation causes the VOM topology to change.
         new_phys_coords = assemble(interpolate(SpatialCoordinate(mesh), pmesh.coordinates.function_space()))
+        
+        if t == 0.04:
+            print("new phys coord [t=0.04]:", new_phys_coords.dat.data_ro)
 
         if len(boundary_particles) != 0:
             # TODO: Trigger exchange: for each rank constructs 2 sets of particles: absorbed (left mesh domain or partition boundary) + arrived

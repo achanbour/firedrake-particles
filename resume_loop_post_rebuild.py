@@ -37,6 +37,7 @@ velocity_func.dat.data_wo[:] = particle_velocity
 print("Initial particle positions: ", particle_vom.coordinates.dat.data_ro)
 T_final, removed_particles = move_particles_in_ref_space(particle_vom, mesh, v_fn=velocity_func, t=0.04, dt=0.01, T=0.05)
 print("Removed particles: ", removed_particles)
+# print("Final particle reference positions: ", particle_vom.reference_coordinates.dat.data_ro)
 print("Final particle positions: ", particle_vom.coordinates.dat.data_ro)
 
 """

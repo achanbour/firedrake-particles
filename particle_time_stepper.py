@@ -93,7 +93,6 @@ class ForwardEulerTimeStepper:
     def step(self):
         # global STEP_COUNT
         # STEP_COUNT += 1
-        
         self._check_callable_is_current()
 
         # Execute cached ParLoops
