@@ -30,19 +30,8 @@ v_io.dat.data_wo[:] = np.tile(v0, (n_particles, 1))
 v.interpolate(v_io)
 print("Initial particle velocities: ", v.dat.data_ro)
 
-"""
-Domain bound checks done on particles closest to the boundaries
-towards which the particles are moving. With v[0], v[1] > 0, particles 
-are moving towards x=1 and y=1
 
-x: Closest particle starting at (1-spacing), needs (1-spacing)+v[0]*T <= 1.0
-x: Closest particle starting at (1-spacing), needs (1-spacing)+v[1]*T <= 1.0
-
-Hence T_max <= spacing/max(0[0], v0[1])
-
-If more time steps are needed, decrease max(v0[0], v0[1]) or increase spacing
-"""
-T = 0.1
+T = 1
 dt = 0.1
 T_final, removed_particles = move_particles_in_ref_space(particle_vom, mesh, v, dt, T, t=0.0)
 print("Final particle positions: ", particle_vom.coordinates.dat.data_ro)

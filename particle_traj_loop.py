@@ -38,7 +38,7 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
     removed_particles = []
 
     outer_time_loop = 0
-    while t < T:
+    while t < T - 1e-12:
         N = pmesh.num_vertices()
 
         outer_time_loop += 1
@@ -138,7 +138,7 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
                 dt_left[failed_global] -= t_cross
                 print("\n   failed set info:")
                 print(f"        dt_left: {dt_left[failed_global]}")
-                print(f"        new ref coords (at crossing in original cell): {X_cross}")
+                print(f"        ref coords at crossing (in original cell): {X_cross}")
             
                 # From the barycentric coords. at the crossing point, determine which edge the particle crossed
                 local_crossed_edge_ids = np.full(len(active_indices), None, dtype=object)
@@ -183,7 +183,7 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
                         A_facet_coord_transform, b_facet_coord_transform = mesh.topology.cell_facet_coord_transforms
                         ref_coords_register[global_i] = A_facet_coord_transform.data[parent_cell, local_crossed_edge_id] @ X_cross[j] + b_facet_coord_transform.data[parent_cell, local_crossed_edge_id]
 
-                    print(f"        new ref coords (in new cell): {ref_coords_register[failed_global]}")
+                    print(f"        ref coords at crossing (in new cell): {ref_coords_register[failed_global]}")
             
             # 4) Update the particle VOM:
             # - modify parent cell ownership
@@ -197,20 +197,18 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
             still_active = np.where(dt_left > 0)[0]
             print(
                 f"\n[warning] Inner loop hit max_inner_iters={max_inner_iters}. "
-                f"Still-active particles: {still_active}, dt_left: {dt_left[still_active]}\n"
+                f"Remaining active particles: {still_active}, dt_left: {dt_left[still_active]}\n"
             )
             break
 
         print()
         print("=" * 60)
-        print("End of time step summary")
+        print(f"End of time step {outer_time_loop} summary")
         print("-" * 60)
         print(f"  Inner iterations to complete dt        : {inner_loop_iter}")
         print(f"  Active iterations per particle         : {active_iters}")
         print(f"  Boundary particles encountered         : {boundary_particles}")
-        print(f"  Updated reference positions            : {pmesh.reference_coordinates.dat.data_ro} ")
-        print("=" * 60)
-        print()
+        print(f"  New reference positions                : {pmesh.reference_coordinates.dat.data_ro}")
 
         # Now update the VOM by removing all boundary particles
         # i.e., particles that have hit an exterior boundary in one of the iterations above.
@@ -240,6 +238,10 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
             # Write physical coordinates back
             # This is simpler than calling pmesh_updater.update_vom()
             pmesh.coordinates.dat.data_wo[:] = new_phys_coords.dat.data_ro
+        
+        print(f"  New physical positions                : {new_phys_coords.dat.data_ro}")
+        print("=" * 60)
+        print()
 
         t += dt
 
