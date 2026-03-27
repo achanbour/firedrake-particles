@@ -31,7 +31,7 @@ v.interpolate(v_io)
 print("Initial particle velocities: ", v.dat.data_ro)
 
 
-T = 1
+T = 7.5
 dt = 0.1
 T_final, removed_particles = move_particles_in_ref_space(particle_vom, mesh, v, dt, T, t=0.0)
 print("Final particle positions: ", particle_vom.coordinates.dat.data_ro)

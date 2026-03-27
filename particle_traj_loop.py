@@ -47,7 +47,7 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
               f"N={N}"
         )
 
-        boundary_particles = [] # particles that hit the domain boundary in current time step
+        boundary_particles_current = [] # particles that hit the domain boundary in current time step
 
         dt_left = np.full(N, dt) # remaining time for the current time step
         ref_coords_register = pmesh.reference_coordinates.dat.data_ro.copy() # array to register updated ref. coords.
@@ -169,12 +169,18 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
                         if next_cell is None or next_cell == -1:
                             # Exterior boundary hit
                             new_parent_cells[global_i, 0] = parent_cell
-                            boundary_particles.append(global_i)
+                            boundary_particles_current.append(global_i)
                             removed_particles.append(particle_ids[global_i])
                             dt_left[global_i] = 0.0
                             warnings.warn(f"Particle {global_i} attempted to cross an exterior boundary facet from cell {parent_cell}")
                         else:
                             new_parent_cells[global_i, 0] = next_cell
+
+                        # Apply coordinate transforms to get ref. coords in the neighbouring cell
+                        # NOTE: This is applied to boundary particles as well with A = 0 and b = 0
+                        # but this is fine since these coordinates are never used again.
+                        # Boundary particles are no longer considered in any subsequent inner loop iteration (as we set their `dt_left` to 0)
+                        # and are immediately discarded once the inner loop terminates.
                         
                         A_facet_coord_transform, b_facet_coord_transform = mesh.topology.cell_facet_coord_transforms
                         ref_coords_register[global_i] = A_facet_coord_transform.data[parent_cell, local_crossed_edge_id] @ X_cross[j] + b_facet_coord_transform.data[parent_cell, local_crossed_edge_id]
@@ -203,7 +209,7 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
         print("-" * 60)
         print(f"  Inner iterations to complete dt        : {inner_loop_iter}")
         print(f"  Active iterations per particle         : {active_iters}")
-        print(f"  Boundary particles encountered         : {boundary_particles}")
+        print(f"  Boundary particles encountered         : {boundary_particles_current}")
         print(f"  New reference positions                : {pmesh.reference_coordinates.dat.data_ro}")
 
         # Now update the VOM by removing all boundary particles
@@ -211,9 +217,9 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
         # This operation causes the VOM topology to change.
         new_phys_coords = assemble(interpolate(SpatialCoordinate(mesh), pmesh.coordinates.function_space()))
 
-        if len(boundary_particles) != 0:
+        if len(boundary_particles_current) != 0:
             # TODO: Trigger exchange: for each rank constructs 2 sets of particles: absorbed (left mesh domain or partition boundary) + arrived
-            pmesh_updater.rebuild_vom(absorbed_vom_indices=boundary_particles, new_coords=new_phys_coords)
+            pmesh_updater.rebuild_vom(absorbed_vom_indices=boundary_particles_current, new_coords=new_phys_coords)
 
             # Update/rebuild all fields eagerly (in parallel: once exchange is over)
             # And ensure the stepper stores the updated fields!
@@ -227,7 +233,7 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
 
             # Only retain the ID of surviving particles
             keep_mask = np.ones(len(particle_ids), dtype=bool)
-            keep_mask[boundary_particles] = False
+            keep_mask[boundary_particles_current] = False
             particle_ids = particle_ids[keep_mask]
 
         else:
