@@ -73,10 +73,6 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
             # Recompute invJ on the CURRENT embedding
             # This is is done here rather than in the outer loop as cell ownership changes within the inner loop
             invJ_vom.interpolate(invJ_expr)
-
-            # if t == 0.04 and inner_loop_iter == 1:
-            #     # Inspect stepper's callable closure to print parloop args
-            #     breakpoint()
             
             # Get updated reference positions using the full time step
             trial_ref_pos_fn = stepper.step()
