@@ -4,8 +4,9 @@ import numpy as np
 import warnings
 from update_vom import VertexOnlyMeshUpdater
 from particle_time_stepper import ForwardEulerTimeStepper
+from plot_vom import plot_particles_snapshot
 
-def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters=50):
+def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters=50, plot=False):
     """
     Update particles in reference space using Forward Euler:
 
@@ -38,6 +39,7 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
     removed_particles = []
 
     outer_time_loop = 0
+    frame = 0
     while t < T - 1e-12:
         N = pmesh.num_vertices()
 
@@ -245,10 +247,15 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
         print("=" * 60)
         print()
 
+        if plot == True:
+            plot_particles_snapshot(mesh, pmesh, frame=frame)
+            frame += 1
+
         t += dt
 
     return t, removed_particles
 
+BISECTION_COUNT = 0
 def bisect_crossing_time(
         stepper,
         dt_left,
@@ -262,6 +269,8 @@ def bisect_crossing_time(
     
     Returns crossing times and reference coordinates at the crossing point for each failed particle.
     """
+    global BISECTION_COUNT
+    BISECTION_COUNT += 1
     n_failed = len(failed_global)
 
     # Per particle bisection brakets [t_lo, t_hi]
