@@ -1,5 +1,6 @@
 from firedrake.interpolation import interpolate, get_interpolator
 from firedrake import Function
+from firedrake.assemble import assemble
 
 STEP_COUNT = 0
 
@@ -16,9 +17,9 @@ class ForwardEulerTimeStepper:
         assert invJ.function_space().mesh() == m
         assert dt.function_space().mesh() == m
 
-        # NOTE: in general, v could be an expression on the VOM OR parent mesh
-        # For now, we assume it's a function of the VOM
-        assert v.function_space().mesh() == m
+        # velocity field could be an defined on the VOM OR on parent mesh
+        if v.function_space().mesh() != m:
+            v = assemble(interpolate(v, m.coordinates.function_space()))
         
         # Forward Euler update expression (in ref. space)
         self.update_expr = X + invJ * v * dt

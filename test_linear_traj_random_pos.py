@@ -4,7 +4,7 @@ import numpy as np
 from particle_traj_loop import move_particles_in_ref_space
 
 """
-Deterministic particle trajectory test using random constant per-particle velocities
+Deterministic particle trajectory test with random constant velocity (different across particles)
 and random starting positions.
 """
 

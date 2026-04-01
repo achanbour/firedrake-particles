@@ -3,8 +3,8 @@ import numpy as np
 from particle_traj_loop import move_particles_in_ref_space, BISECTION_COUNT
 
 """
-Deterministic particle trajectory test using using constant velocity (identical for all particles)
-and particles initially placed on the mesh diagonal.
+Deterministic particle trajectory test with constant velocity (identical for all particles)
+and starting positions on the mesh diagonal.
 """
 
 # Define the parent mesh
