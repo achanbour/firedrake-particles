@@ -14,6 +14,7 @@ def plot_particles_snapshot(mesh, vom, frame=0):
     plt.savefig(f"output/frame_{frame:04d}.png", dpi=150)
     plt.close(fig)
 
+# Generate a video of moving particles
 # ffmpeg -r 15 -i output/frame_%04d.png -c:v libx264 -pix_fmt yuv420p particles.mp4
-# -crf 18 for higher quality, less compression
-# ls -1A | wc -l
+# use `-crf 18` for higher quality, less compression
+# Use `ls -1A | wc -l` to count generated frames in output directory
