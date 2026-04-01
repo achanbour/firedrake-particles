@@ -30,7 +30,7 @@ print("Initial particle positions: ", vom.coordinates.dat.data_ro)
 
 # Velocity field
 # v(q) = omega * J * q -> linear in space so use CG1 FS
-omega = 1.0 # angular speed
+omega = 0.5 # angular speed
 x = SpatialCoordinate(mesh)
 v_expr = omega * as_vector([-x[1]+c[1], x[0]-c[0]])
 V = VectorFunctionSpace(mesh, "CG", 1) 
@@ -43,6 +43,9 @@ dt = 0.01
 T_final, removed_particles = move_particles_in_ref_space(vom, mesh, v, dt, T, t=0.0, plot=True)
 print("Final particle positions: ", vom.coordinates.dat.data_ro)
 print("Removed particles: ", removed_particles)
+
+from particle_traj_loop import BISECTION_COUNT
+print("Number of bisection calls to resolve cell crossings: ", BISECTION_COUNT)
 
 # NOTE: Forward Euler is not exact in this case.
 # Visually, we can see particles moving away from the center of the circle they started on.

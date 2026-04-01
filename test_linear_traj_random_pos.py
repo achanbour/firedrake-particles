@@ -35,7 +35,7 @@ V = VectorFunctionSpace(particle_vom, "DG", 0, dim=gdim)
 V_io = VectorFunctionSpace(particle_vom.input_ordering, "DG", 0, dim=gdim)
 v = Function(V)
 v_io = Function(V_io)
-input_velocities = np.random.normal(0.01, 0.5, size=(N,2))
+input_velocities = np.random.normal(0.1, 0.5, size=(N,2)) # 0.01
 v_io.dat.data[:] = input_velocities
 v.interpolate(v_io)
 initial_particle_velocities = v.dat.data_ro.copy()
@@ -49,6 +49,9 @@ with PETSc.Log.Event("ParticleTrajectoryLoop"):
     # print(f"[wall_time] {t1 - t0} s")
 print("Final particle positions: ", particle_vom.coordinates.dat.data_ro)
 print("Removed particles: ", removed_particles)
+
+from particle_traj_loop import BISECTION_COUNT
+print("Number of bisection calls to resolve crossings: ", BISECTION_COUNT)
 
 # from particle_time_stepper import STEP_COUNT
 # print("Total ForwardEulerTimeStepper calls: ", STEP_COUNT)
@@ -68,6 +71,3 @@ exact_final_coords_survived = exact_final_coords[keep]
 print("Exact final particle positions: ", exact_final_coords_survived)
 print("Exact results matched up to 1e-5: ", np.allclose(particle_vom.coordinates.dat.data_ro, exact_final_coords_survived, atol=1e-5, rtol=0))
 print("Exact results matched up to 1e-4: ", np.allclose(particle_vom.coordinates.dat.data_ro, exact_final_coords_survived, atol=1e-4, rtol=0))
-
-
-

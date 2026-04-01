@@ -1,6 +1,6 @@
 from firedrake import *
 import numpy as np
-from particle_traj_loop import move_particles_in_ref_space, BISECTION_COUNT
+from particle_traj_loop import move_particles_in_ref_space
 
 """
 Deterministic particle trajectory test with constant velocity (identical for all particles)
@@ -38,4 +38,5 @@ T_final, removed_particles = move_particles_in_ref_space(particle_vom, mesh, v, 
 print("Final particle positions: ", particle_vom.coordinates.dat.data_ro)
 print("Removed particles: ", removed_particles)
 
+from particle_traj_loop import BISECTION_COUNT
 print("Number of bisection calls to resolve crossings: ", BISECTION_COUNT)
