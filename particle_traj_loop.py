@@ -6,7 +6,12 @@ from update_vom import VertexOnlyMeshUpdater
 from particle_time_stepper import ForwardEulerTimeStepper
 from plot_vom import plot_particles_snapshot
 
-def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters=50, plot=False):
+def move_particles_in_ref_space(
+        pmesh, mesh, v_fn, dt, T, t=0.0, 
+        max_inner_iters=50, 
+        max_bisection_iters=None,
+        bary_tol=1e-12,
+        plot=False):
     """
     Update particles in reference space using Forward Euler:
 
@@ -59,6 +64,8 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
         active_iters = np.zeros(N, dtype=int)
 
         while inner_loop_iter < max_inner_iters:
+            dt_left_prev = dt_left.copy()
+            
             # Check if there are any active particles left
             active = dt_left > 0
             if not np.any(active):
@@ -84,7 +91,7 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
             bary_new = ref_cell.compute_barycentric_coordinates(trial_ref_pos_fn.dat.data_ro)
 
             # Split particles into passed/failed sets
-            passed_mask = np.all(bary_new[active_indices] >= -1e-12, axis=1)
+            passed_mask = np.all(bary_new[active_indices] >= -bary_tol, axis=1)
             failed_mask = ~passed_mask
 
             passed_local = np.where(passed_mask)[0] # local indices in the active set
@@ -131,9 +138,17 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
                 2. Determine which cell to go to next
                 2. Compute reference coordinates in the new cell.
                 """
-                t_cross, bary_cross, X_cross = bisect_crossing_time(stepper, dt_left, ref_cell, failed_global)
-
+                if max_bisection_iters is not None:
+                    t_cross, bary_cross, X_cross = bisect_crossing_time(stepper, dt_left, ref_cell, failed_global, bary_tol=bary_tol, max_iters=max_bisection_iters)
+                else:
+                    t_cross, bary_cross, X_cross = bisect_crossing_time(stepper, dt_left, ref_cell, failed_global, bary_tol=bary_tol)
+                
                 dt_left[failed_global] -= t_cross
+                
+                # Zero out dt_left if it hasn't changed from the previous iteration
+                dt_left_stalled = (dt_left > 0) & (dt_left_prev - dt_left < dt * 1e-6)
+                dt_left[dt_left_stalled] = 0
+
                 print("\n   failed set info:")
                 print(f"        dt_left: {dt_left[failed_global]}")
                 print(f"        ref coords at crossing (in original cell): {X_cross}")
@@ -188,7 +203,7 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
                         ref_coords_register[global_i] = A_facet_coord_transform.data[parent_cell, local_crossed_edge_id] @ X_cross[j] + b_facet_coord_transform.data[parent_cell, local_crossed_edge_id]
 
                     print(f"        ref coords at crossing (in new cell): {ref_coords_register[failed_global]}")
-            
+
             # 4) Update the particle VOM:
             # - modify parent cell ownership
             # - update the reference coordinates
@@ -197,13 +212,13 @@ def move_particles_in_ref_space(pmesh, mesh, v_fn, dt, T, t=0.0, max_inner_iters
             # - recompute inverse Jacobian using new parent cell ownership (done at start of inner loop)
             # 5) Re-enter the inner loop with new ref. coords., parent cells and remaining dt_left
 
-        if inner_loop_iter == max_inner_iters:
-            still_active = np.where(dt_left > 0)[0]
-            print(
-                f"\n[warning] Inner loop hit max_inner_iters={max_inner_iters}. "
-                f"Remaining active particles: {still_active}, dt_left: {dt_left[still_active]}\n"
-            )
-            break
+            if inner_loop_iter == max_inner_iters:
+                still_active = np.where(dt_left > 0)[0]
+                print(
+                    f"\n[warning] Inner loop hit max_inner_iters={max_inner_iters}. "
+                    f"Remaining active particles: {still_active}, dt_left: {dt_left[still_active]}\n"
+                )
+                break
 
         print()
         print("=" * 60)
@@ -261,7 +276,7 @@ def bisect_crossing_time(
         dt_left,
         ref_cell, 
         failed_global,
-        bary_tol=1e-12,
+        bary_tol,
         time_tol=1e-6,
         max_iters=30
 ):
