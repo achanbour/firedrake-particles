@@ -5,6 +5,13 @@ from firedrake.assemble import assemble
 STEP_COUNT = 0
 
 class ForwardEulerTimeStepper:
+    """
+    Updates particles positions by Forward Euler:
+
+    X(t + dt) = X(t) + J^-1 * v * dt
+    
+    where J is the Jacobian of the geometric map F: X -> x. 
+    """
     def __init__(self, X, invJ, v, dt):
         self._X = X
         self._invJ = invJ

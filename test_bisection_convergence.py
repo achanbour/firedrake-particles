@@ -27,10 +27,10 @@ v0 = np.array( [0.45, 0.25])
 # Time parameters
 # dt controls how many crossings occur (large: allow more crossings, small: few crossings)
 # T controls how much crossing error gets accumulated (longer is better to accumulate signal?)
-T = 1
+T = 1.5
 dt = 0.1
 
-bisection_iters = [1, 2, 4, 8, 16, 30]
+bisection_iters = [1, 2, 4, 8, 16, 20, 30]
 errors = []
 bisection_calls = []
 

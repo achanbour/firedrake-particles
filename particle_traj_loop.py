@@ -13,11 +13,7 @@ def move_particles_in_ref_space(
         bary_tol=1e-12,
         plot=False):
     """
-    Update particles in reference space using Forward Euler:
-
-    X(t + dt) = X(t) + J^-1*v*dt 
-    
-    where J = dF/dX is the Jacobian of the geometric map F: X -> x.
+    Reconstructs the trajectory of particles using a time stepping scheme in reference space.
     """
     x = SpatialCoordinate(mesh)
     invJ_expr = inv(ReferenceGrad(x))
@@ -140,6 +136,8 @@ def move_particles_in_ref_space(
                 """
                 if max_bisection_iters is not None:
                     t_cross, bary_cross, X_cross = bisect_crossing_time(stepper, dt_left, ref_cell, failed_global, bary_tol=bary_tol, max_iters=max_bisection_iters)
+                    if max_bisection_iters == 20:
+                        breakpoint()
                 else:
                     t_cross, bary_cross, X_cross = bisect_crossing_time(stepper, dt_left, ref_cell, failed_global, bary_tol=bary_tol)
                 
