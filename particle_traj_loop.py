@@ -4,6 +4,7 @@ import numpy as np
 import warnings
 from update_vom import VertexOnlyMeshUpdater
 from particle_time_stepper import ForwardEulerTimeStepper
+from particle_logger import ParticleLogger
 from plot_vom import plot_particles_snapshot
 
 def move_particles_in_ref_space(
@@ -15,6 +16,9 @@ def move_particles_in_ref_space(
     """
     Reconstructs the trajectory of particles using a time stepping scheme in reference space.
     """
+
+    logger = ParticleLogger(level="info")
+
     x = SpatialCoordinate(mesh)
     invJ_expr = inv(ReferenceGrad(x))
     ref_cell = mesh.coordinates.function_space().finat_element.cell
@@ -45,10 +49,7 @@ def move_particles_in_ref_space(
         N = pmesh.num_vertices()
 
         outer_time_loop += 1
-        print(f"\n[outer time loop]: {outer_time_loop}\n" \
-              f"t={t:.3f} -> {min(t+dt, T):.3f}\n" \
-              f"N={N}"
-        )
+        logger.outer_loop(outer_time_loop, t, dt, T, N)
 
         boundary_particles_current = [] # particles that hit the domain boundary in current time step
 
@@ -81,7 +82,7 @@ def move_particles_in_ref_space(
             
             # Get updated reference positions using the full time step
             trial_ref_pos_fn = stepper.step()
-            print("trial ref pos: ", trial_ref_pos_fn.dat.data_ro)
+            # logger.inspect("trial ref pos", trial_ref_pos_fn.dat.data_ro, level="info")
 
             # Compute barycentric coordinates at the new positions
             bary_new = ref_cell.compute_barycentric_coordinates(trial_ref_pos_fn.dat.data_ro)
@@ -108,20 +109,22 @@ def move_particles_in_ref_space(
                 - update parent cell to neighbour across the crossed facet
                 - re-enter inner loop as active with updated ref. pos., parent cell and dt_left
             """
-            # print(f"\n---Inner loop iteration: {inner_loop_iter}---")
-            print(f"\n[inner loop] iteration {inner_loop_iter}")
-            print(f"    active particles: {active_indices}")
-            print(f"    failed set: {failed_global}")
-            print(f"    passed set: {passed_global}")
+            logger.inner_loop(inner_loop_iter, active_indices, passed_global, failed_global)
 
             # Passed particles
             if len(passed_global) > 0:
                 dt_left[passed_global] = 0
                 ref_coords_register[passed_global] = trial_ref_pos_fn.dat.data_ro[passed_global]
 
-                print("\n   passed set info:")
-                print(f"        dt left: {dt_left[passed_global]}")
-                print(f"        new ref coords: {ref_coords_register[passed_global]}")
+                # logger.inspect_particles("passed particles", {
+                #     "dt_left": dt_left[passed_global],
+                #     "new_ref_coords": ref_coords_register[passed_global]
+                # }, level="info")
+
+                logger.print_particles("passed particles", {
+                    "dt_left ": dt_left[passed_global],
+                    "new_ref_coords": ref_coords_register[passed_global],
+                }, indices=passed_global, level="info")
 
             parent_cells = pmesh.topology.cell_parent_cell_list # parent cell ID for each point in VOM order
             new_parent_cells = parent_cells.copy()
@@ -140,14 +143,19 @@ def move_particles_in_ref_space(
                     t_cross, bary_cross, X_cross = bisect_crossing_time(stepper, dt_left, ref_cell, failed_global, bary_tol=bary_tol)
                 
                 dt_left[failed_global] -= t_cross
-                
+
+                logger.print_particles("failed particles", {
+                    "dt_left": dt_left[failed_global],
+                    "t_cross": t_cross,
+                    "bary_cross": bary_cross,
+                    "X_cross": X_cross,
+                }, indices=failed_global, level="info")
+                                
                 # Zero out dt_left if it hasn't changed from the previous iteration
                 dt_left_stalled = (dt_left > 0) & (dt_left_prev - dt_left < dt * 1e-6)
                 dt_left[dt_left_stalled] = 0
 
-                print("\n   failed set info:")
-                print(f"        dt_left: {dt_left[failed_global]}")
-                print(f"        ref coords at crossing (in original cell): {X_cross}")
+                # logger.inspect_particles()
             
                 # From the barycentric coords. at the crossing point, determine which edge the particle crossed
                 local_crossed_edge_ids = np.full(len(active_indices), None, dtype=object)
@@ -197,9 +205,21 @@ def move_particles_in_ref_space(
                         
                         A_facet_coord_transform, b_facet_coord_transform = mesh.topology.cell_facet_coord_transforms
                         ref_coords_register[global_i] = A_facet_coord_transform.data[parent_cell, local_crossed_edge_id] @ X_cross[j] + b_facet_coord_transform.data[parent_cell, local_crossed_edge_id]
+                    
+                logger.print_particles("failed particles — cell transitions", {
+                    "parent_cell": parent_cells[failed_global, 0],
+                    "crossed_edge": local_crossed_edge_ids[failed_local],
+                    "next_cell": new_parent_cells[failed_global, 0],
+                    "new_ref_coords": ref_coords_register[failed_global],
+                }, indices=failed_global, level="info")
 
-                    print(f"        ref coords at crossing (in new cell): {ref_coords_register[failed_global]}")
-                
+                # logger.inspect_particles("failed particles", {
+                #     "dt left": dt_left[failed_global],
+                #     "crossed edges": local_crossed_edge_ids,
+                #     "new parent cells": new_parent_cells,
+                #     "new ref coords": ref_coords_register[failed_global]
+                # }, level="info")
+
             # 4) Update the particle VOM:
             # - modify parent cell ownership
             # - update the reference coordinates
@@ -216,19 +236,17 @@ def move_particles_in_ref_space(
                 )
                 break
 
-        print()
-        print("=" * 60)
-        print(f"End of time step {outer_time_loop} summary")
-        print("-" * 60)
-        print(f"  Inner iterations to complete dt        : {inner_loop_iter}")
-        print(f"  Active iterations per particle         : {active_iters}")
-        print(f"  Boundary particles encountered         : {boundary_particles_current}")
-        print(f"  New reference positions                : {pmesh.reference_coordinates.dat.data_ro}")
-
         # Now update the VOM by removing all boundary particles
         # i.e., particles that have hit an exterior boundary in one of the iterations above.
         # This operation causes the VOM topology to change.
         new_phys_coords = assemble(interpolate(SpatialCoordinate(mesh), pmesh.coordinates.function_space()))
+
+        logger.outer_summary(
+            outer_time_loop, inner_loop_iter, active_iters,
+            boundary_particles_current,
+            pmesh.reference_coordinates.dat.data_ro,
+            new_phys_coords.dat.data_ro
+        )
 
         if len(boundary_particles_current) != 0:
             # TODO: Trigger exchange: for each rank constructs 2 sets of particles: absorbed (left mesh domain or partition boundary) + arrived
@@ -253,10 +271,6 @@ def move_particles_in_ref_space(
             # Write physical coordinates back
             # This is simpler than calling pmesh_updater.update_vom()
             pmesh.coordinates.dat.data_wo[:] = new_phys_coords.dat.data_ro
-        
-        print(f"  New physical positions                : {new_phys_coords.dat.data_ro}")
-        print("=" * 60)
-        print()
 
         if plot == True:
             plot_particles_snapshot(mesh, pmesh, frame=frame)
