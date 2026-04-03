@@ -10,7 +10,7 @@ def move_particles_in_ref_space(
         pmesh, mesh, v_fn, dt, T, t=0.0, 
         max_inner_iters=50, 
         max_bisection_iters=None,
-        bary_tol=1e-12,
+        bary_tol=1e-7,
         plot=False):
     """
     Reconstructs the trajectory of particles using a time stepping scheme in reference space.
@@ -136,8 +136,6 @@ def move_particles_in_ref_space(
                 """
                 if max_bisection_iters is not None:
                     t_cross, bary_cross, X_cross = bisect_crossing_time(stepper, dt_left, ref_cell, failed_global, bary_tol=bary_tol, max_iters=max_bisection_iters)
-                    if max_bisection_iters == 20:
-                        breakpoint()
                 else:
                     t_cross, bary_cross, X_cross = bisect_crossing_time(stepper, dt_left, ref_cell, failed_global, bary_tol=bary_tol)
                 
@@ -201,7 +199,7 @@ def move_particles_in_ref_space(
                         ref_coords_register[global_i] = A_facet_coord_transform.data[parent_cell, local_crossed_edge_id] @ X_cross[j] + b_facet_coord_transform.data[parent_cell, local_crossed_edge_id]
 
                     print(f"        ref coords at crossing (in new cell): {ref_coords_register[failed_global]}")
-
+                
             # 4) Update the particle VOM:
             # - modify parent cell ownership
             # - update the reference coordinates
