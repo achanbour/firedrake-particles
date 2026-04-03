@@ -55,10 +55,10 @@ class ParticleLogger:
         arrays = {k: np.atleast_1d(np.asarray(v)) for k, v in data.items()}
         N = next(iter(arrays.values())).shape[0]
         
+        # For each field k, fetch the value(s) of each particle
         rows = {}
         for k, a in arrays.items():
             rows[k] = []
-            # For field k, fetch the value of each particle
             for i in range(N):
                 entry = a[i]
                 values = np.atleast_1d(entry)
@@ -70,10 +70,13 @@ class ParticleLogger:
                         parts.append(repr(v))
                 rows[k].append("   ".join(parts))
 
+        # Compute the column width of each field
         widths = {}
         for k in arrays:
             widths[k] = max(len(k), max(len(r) for r in rows[k]))
         
+        # Print data
+        # One row for each particle
         header = "  " + " | ".join(f"{k:<{widths[k]}}" for k in arrays)
         print(f"\n [{label}]")
         print(header)
@@ -90,6 +93,7 @@ class ParticleLogger:
         arrays = {k: np.atleast_1d(np.asarray(v)) for k, v in data.items()}
         N = next(iter(arrays.values())).shape[0]
 
+        # For each field k, fetch the value(s) of each particle
         rows = {}
         for k, a in arrays.items():
             rows[k] = []
@@ -104,10 +108,13 @@ class ParticleLogger:
                         parts.append(repr(v))
                 rows[k].append("   ".join(parts))
 
+        # Compute the column width of each field
         widths = {}
         for k in arrays:
             widths[k] = max(len(k), max(len(r) for r in rows[k]))
 
+        # Print data
+        # One block for each particle
         header = "| " + " | ".join(f"{k:<{widths[k]}}" for k in arrays) + " |"
         div = "-" * max(len(header), len(label) + 4)
 
@@ -120,7 +127,7 @@ class ParticleLogger:
         print(div)
 
 
-    # Summarise loop
+    # Summarise loops
     def outer_loop(self, iteration, t, dt, T, N):
         if self.LEVELS["summary"] <= self.level:
             self.section(
