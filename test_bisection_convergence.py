@@ -21,7 +21,7 @@ x0 = np.column_stack([x_diag, x_diag])
 
 # Velocity
 # Speed controls how many crossings occur per time step
-# E.g., For speed=0.7 and h=0.2, approx. 3-4 facets crossed
+# E.g., For speed=0.7 and h=0.2, approx. 3-4 facets crossed per unit of time
 v0 = np.array( [0.45, 0.25])
 
 # Time parameters
