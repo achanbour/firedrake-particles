@@ -12,12 +12,13 @@ def move_particles_in_ref_space(
         max_inner_iters=50, 
         max_bisection_iters=None,
         bary_tol=1e-6,
-        plot=False):
+        plot=False,
+        log_level="info"):
     """
     Reconstructs the trajectory of particles using a time stepping scheme in reference space.
     """
 
-    logger = ParticleLogger(level="info")
+    logger = ParticleLogger(level=log_level)
 
     x = SpatialCoordinate(mesh)
     invJ_expr = inv(ReferenceGrad(x))
@@ -162,7 +163,7 @@ def move_particles_in_ref_space(
 
                     # Catch the degenerate case when a particle lands on a vertex
                     # two barycentric coords are 0 so argmin is ambiguous
-                    near_zero = abs(bary_cross[idx]) < 1e-12
+                    near_zero = abs(bary_cross[idx]) < bary_tol
                     if np.count_nonzero(near_zero) >= 2:
                         warnings.warn(
                             f"Degenerate crossing: particle landed on a vertex.\n"

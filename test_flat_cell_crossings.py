@@ -3,7 +3,6 @@ from firedrake.pyplot import triplot
 import matplotlib.pyplot as plt
 import numpy as np
 
-
 num_cells = [2, 5, 10, 15, 20, 30]
 # num_cells = [10]
 errors = []
@@ -12,32 +11,12 @@ bisection_calls = []
 for n in num_cells:
     mesh = UnitSquareMesh(n, n)
 
-    # Lift coordinates into a degree 2 space
-    # by defining a non-linear map (s,t) -> (x, y) where
-    # (s,t) are the coords. of the flat mesh
-    # (x,y) are the coords. of the curved mesh
-    V = VectorFunctionSpace(mesh, "CG", 2)
-    v = Function(V)
-
-    s, t = SpatialCoordinate(mesh)
-
-    # x_new = s
-    # y_new = t + 0.2 * sin(pi*s)*sin(pi*t)
-
-    x_new = s + 0.5 *s*(1-s)
-    y_new = t + 0.5 *t*(1-t)
-
-    v.interpolate(
-        as_vector([x_new, y_new])
-    )
-    curved_mesh = Mesh(v)
-
     # Place a single particle close to a facet
     # For n = 2, a facet contains the point (0.625, 0.625)
     # For n = 10,  a facet contains the point (0.145, 0.145)
     # x0 = np.array([[0.140, 0.214]])
     x0 = np.array([[0.001, 0.001]])
-    particle_vom = VertexOnlyMesh(curved_mesh, x0)
+    particle_vom = VertexOnlyMesh(mesh, x0)
     x0_vom = particle_vom.coordinates.dat.data_ro.copy()
 
     # Assign per particle velocities
@@ -50,18 +29,12 @@ for n in num_cells:
     # We want to have a single crossing to evaluate the error introduced by the affine approximation in the cell transition
     dt = 0.5 * (1/n) / np.linalg.norm(u.dat.data_ro)
 
-    # NOTE: set dt to be tiny to shrink the Forward Euler error
-    # but run long enough so that a crossing occurs
-    dt_small = 1e-4
-    T_long = 1.5 * (1/n - 0.001) / np.linalg.norm(u.dat.data_ro)
-
     import particle_traj_loop as ptl
     ptl.BISECTION_COUNT = 0 # reset global counter
 
     # Single time step -> single crossing
-    T_final, removed_particles = ptl.move_particles_in_ref_space(particle_vom, curved_mesh, u, dt_small, T_long, t=0.0, plot=False)
+    T_final, removed_particles = ptl.move_particles_in_ref_space(particle_vom, mesh, u, dt, dt, t=0.0, plot=False)
     
-
     print()
     print("Final particle position: ", particle_vom.coordinates.dat.data_ro)
 
@@ -87,12 +60,3 @@ for n, cross, err in zip(num_cells, bisection_calls, errors):
 # plt.ylabel("L2 error")
 # plt.title("Crossing error in curved cells")
 # plt.savefig("plots/crossing_error.png")
-
-
-# NOTE:
-# For the case with 0 crossings: use T=dt and dt=O(h) so that the Forward Euler error is O(dt^2)=O(h^2)
-# Note that error=C*h^2 for some problem dependent constant C
-# To verify: divide each error (for each h) by h^2 and check that the constant C is the same
-# ---
-# For the case with 1 crossing: use tiny dt to shrink the Forward Euler error and measure the error in the affine approx. of cell transition
-# facet coord transforms. Use the same logic as above to verify that the error is O(h^2).

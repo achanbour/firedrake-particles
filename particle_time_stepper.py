@@ -9,8 +9,9 @@ class ForwardEulerTimeStepper:
     Updates particles positions by Forward Euler:
 
     X(t + dt) = X(t) + J^-1 * v * dt
-    
-    where J is the Jacobian of the geometric map F: X -> x. 
+
+    where J is the Jacobian of the geometric map F: X -> x, used to pull back the velocity field
+    from physical space to reference space.
     """
     def __init__(self, X, invJ, v, dt):
         self._X = X
@@ -29,6 +30,7 @@ class ForwardEulerTimeStepper:
             v = assemble(interpolate(v, m.coordinates.function_space()))
         
         # Forward Euler update expression (in ref. space)
+        # NOTE: invJ is constant, evaluated at the particle's initial position in a single time step [t, t+dt]
         self.update_expr = X + invJ * v * dt
 
         self.interp_expr = None
