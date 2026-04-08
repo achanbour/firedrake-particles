@@ -248,6 +248,7 @@ def move_particles_in_ref_space(
 
         if len(boundary_particles_current) != 0:
             # TODO: Trigger exchange: for each rank constructs 2 sets of particles: absorbed (left mesh domain or partition boundary) + arrived
+            # TODO: Handle the case when the VOM becomes empty?
             pmesh_updater.rebuild_vom(absorbed_vom_indices=boundary_particles_current, new_coords=new_phys_coords)
 
             # Update/rebuild all fields eagerly (in parallel: once exchange is over)

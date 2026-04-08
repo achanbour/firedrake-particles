@@ -27,7 +27,11 @@ v0 = np.array( [0.45, 0.25])
 # Time parameters
 # dt controls how many crossings occur (large: allow more crossings, small: few crossings)
 # T controls how much crossing error gets accumulated (longer is better to accumulate signal?)
-T = 1.0 # 2.0
+# ---
+# At T = 2.0, only one particle remains
+# At T = 2.4, the remaining particle leaves the domain so new VOM is empty
+# ---
+T = 2.4 # 1.0, 1.5, 2.0
 dt = 0.1
 
 bisection_iters = [1, 2, 4, 8, 16, 30] # 20
