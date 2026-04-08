@@ -11,7 +11,7 @@ def move_particles_in_ref_space(
         pmesh, mesh, v_fn, dt, T, t=0.0, 
         max_inner_iters=50, 
         max_bisection_iters=None,
-        bary_tol=1e-7,
+        bary_tol=1e-6,
         plot=False):
     """
     Reconstructs the trajectory of particles using a time stepping scheme in reference space.
@@ -60,11 +60,10 @@ def move_particles_in_ref_space(
         inner_loop_iter = 0
         active_iters = np.zeros(N, dtype=int)
 
-        while inner_loop_iter < max_inner_iters:
-            dt_left_prev = dt_left.copy()
-            
+        while inner_loop_iter < max_inner_iters:            
             # Check if there are any active particles left
-            active = dt_left > 0
+            # A particle remains active if it has more than the equivalent of one bisection tol. of remaining time
+            active = dt_left > 1e-6
             if not np.any(active):
                 break
 
@@ -86,6 +85,9 @@ def move_particles_in_ref_space(
 
             # Compute barycentric coordinates at the new positions
             bary_new = ref_cell.compute_barycentric_coordinates(trial_ref_pos_fn.dat.data_ro)
+
+            # if max_bisection_iters == 30 and inner_loop_iter > 2:
+            #     breakpoint()
 
             # Split particles into passed/failed sets
             passed_mask = np.all(bary_new[active_indices] >= -bary_tol, axis=1)
@@ -150,10 +152,6 @@ def move_particles_in_ref_space(
                     "bary_cross": bary_cross,
                     "X_cross": X_cross,
                 }, indices=failed_global, level="info")
-                                
-                # Zero out dt_left if it hasn't changed from the previous iteration
-                dt_left_stalled = (dt_left > 0) & (dt_left_prev - dt_left < dt * 1e-6)
-                dt_left[dt_left_stalled] = 0
 
                 # logger.inspect_particles()
             
@@ -229,7 +227,7 @@ def move_particles_in_ref_space(
             # 5) Re-enter the inner loop with new ref. coords., parent cells and remaining dt_left
 
             if inner_loop_iter == max_inner_iters:
-                still_active = np.where(dt_left > 0)[0]
+                still_active = np.where(dt_left > 1e-6)[0] # same time tol. as bisection
                 print(
                     f"\n[warning] Inner loop hit max_inner_iters={max_inner_iters}. "
                     f"Remaining active particles: {still_active}, dt_left: {dt_left[still_active]}\n"
