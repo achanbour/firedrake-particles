@@ -87,9 +87,6 @@ def move_particles_in_ref_space(
             # Compute barycentric coordinates at the new positions
             bary_new = ref_cell.compute_barycentric_coordinates(trial_ref_pos_fn.dat.data_ro)
 
-            # if max_bisection_iters == 30 and inner_loop_iter > 2:
-            #     breakpoint()
-
             # Split particles into passed/failed sets
             passed_mask = np.all(bary_new[active_indices] >= -bary_tol, axis=1)
             failed_mask = ~passed_mask
