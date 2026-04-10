@@ -1,5 +1,9 @@
 import numpy as np
 
+class EmptyVOMError(Exception):
+    """Raised when all particles have been absorbed and the VertexOnlyMesh is empty."""
+    pass
+
 class VertexOnlyMeshUpdater:
     """
     An in-place updater of a VertexOnlyMesh
@@ -590,5 +594,9 @@ class VertexOnlyMeshUpdater:
         self.vom._spatial_index = None
         self.vom._bounding_box_coords = None
         self.vom._saved_coordinate_dat_version = self.vom.coordinates.dat.dat_version
+
+        n_survived_points = self.vom.topology.num_vertices()
+        if n_survived_points == 0:
+            raise EmptyVOMError("No points remaining in the VertexOnlyMesh.")
 
         return self.vom

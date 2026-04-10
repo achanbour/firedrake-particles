@@ -34,7 +34,7 @@ print("Initial particle velocities: ", v0_vom)
 
 # dt=0.1, t=2.6: 1 particle removed
 # dt=0.1, t=7.6: 2 particles removed
-T = 7.6
+T = 51
 dt = 0.1
 T_final, removed_particles = move_particles_in_ref_space(particle_vom, mesh, v, dt, T, t=0.0, plot=False)
 
