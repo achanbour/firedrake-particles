@@ -36,8 +36,8 @@ for n in num_cells:
 
     # Make the particle travel at most half a cell width to ensure that no more than one crossing occurs
     # regardless where the particle started from
-    T_long = 1.5 * (h - 0.001) / speed
     dt = 0.5 * h / speed
+    T_long = 1.5 * (h - 0.001) / speed
 
     # Can set dt to be tiny to shrink the Forward Euler error but run long enough so that a crossing occurs
     # dt_small = 0.01 * (1/n)**2 / np.linalg.norm(u.dat.data_ro)  # O(h^2)

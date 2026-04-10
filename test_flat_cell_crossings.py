@@ -1,6 +1,7 @@
 from firedrake import *
 from firedrake.pyplot import triplot
 import matplotlib.pyplot as plt
+import particle_traj_loop as ptl
 import numpy as np
 
 num_cells = [2, 5, 10, 15, 20, 30]
@@ -26,13 +27,10 @@ for n in num_cells:
 
     # Make the particle travel at most half a cell width to ensure that no more than one crossing occurs
     # regardless where the particle started from
-    # We want to have a single crossing to evaluate the error introduced by the affine approximation in the cell transition
     dt = 0.5 * (1/n) / np.linalg.norm(u.dat.data_ro)
 
-    import particle_traj_loop as ptl
     ptl.BISECTION_COUNT = 0 # reset global counter
 
-    # Single time step -> single crossing
     T_final, removed_particles = ptl.move_particles_in_ref_space(particle_vom, mesh, u, dt, dt, t=0.0, plot=False)
     
     print()

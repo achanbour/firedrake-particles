@@ -245,7 +245,7 @@ def move_particles_in_ref_space(
         )
 
         if len(boundary_particles_current) != 0:
-            # TODO: Trigger exchange: for each rank constructs 2 sets of particles: absorbed (left mesh domain or partition boundary) + arrived
+            # TODO: Trigger exchange: for each rank constructs 2 sets of particles: absorbed (left mesh domain or crossed partition boundary) + arrived
             # TODO: Handle the case when the VOM becomes empty?
             pmesh_updater.rebuild_vom(absorbed_vom_indices=boundary_particles_current, new_coords=new_phys_coords)
 
@@ -253,7 +253,9 @@ def move_particles_in_ref_space(
             # And ensure the stepper stores the updated fields!
             # TODO: Avoid creating a new Function object for storing coords. when rebuilding_vom, 
             # instead apply same logic as in _rebuild_function  
-            stepper.X = pmesh.reference_coordinates
+            # stepper.X = pmesh.reference_coordinates
+
+            stepper.invalidate()
 
             stepper.invJ._match_mesh_topology_version()
             stepper.dt._match_mesh_topology_version()

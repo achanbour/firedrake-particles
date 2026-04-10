@@ -493,7 +493,6 @@ class VertexOnlyMeshUpdater:
             make_vom_from_vom_topology,
             _generate_default_mesh_reference_coordinates_name,
         )
-        import weakref
 
         new_vom_topology = self._rebuild_topology(absorbed_vom_indices, new_coords)
         
@@ -522,39 +521,44 @@ class VertexOnlyMeshUpdater:
         # Hence, the mutable properties of a MeshGeometry object are stored in a ufl_cargo() which is intended to store non-symbolic states without breaking UFL's expectations about the mesh object.
         new_mesh_geometry._parent_mesh = self.parent_mesh
 
-        # --Transfer the new topology into the old MeshGeometry object--
+        # --Attach the new topology to the old MeshGeometry object--
         self.vom.topology = new_vom_topology
         self.vom._parent_mesh = self.parent_mesh
         self.vom._tolerance = tolerance
 
-        # --Transfer the new coordinates into the VOM--
+        # Increment the VOM topology version
+        # TODO: this has to be a collective operation
+        if not hasattr(self.vom, "_topology_version"):
+            self.vom._topology_version = 0
+        self.vom._topology_version += 1
+
+        # Initialize the dictionary that stores the one-step SFs 
+        # This is done lazily, i.e., the first time the VOM gets rebuilt.
+        if not hasattr(self.vom, "_topology_step_sfs"):
+            self.vom._topology_step_sfs = {}
+
+        # One-step SF maps version k (new) -> version k-1 (old) stored under the key k
+        self.vom._topology_step_sfs[self.vom._topology_version] = self.vom.input_ordering_sf
+
+        # --Migrate the coordinate fields--
         # NOTE: The mesh coordinate field defines the geometry of the mesh. Therefore, it is defined as a CoordinatelessFunction (as opposed to a WithGeometry)
         # This means that its function space is built entirely from the mesh topology and the element type, and is not bound to a geometry object.
         # A `CoordinatelessFunction(V, ..)` lives on a function space `V` whose DM/Section specifies how many DoFs there are and how they're arranged. It does not carry a reference to a mesh (`MeshGeometry` object).
         # So `_coordinates` is just a vector of numbers laid out in the FS DoF layout. It can exist independently of the mesh.
         # When we access the `mesh.coordinates` field, Firedrake wraps that coordinateless fucnction in a `WithGeometry` function which binds it to the mesh geometry.
 
-        # CoordinatelessFunction
+        
+        # Update the CoordinatelessFunction storing physical coordinates
         # NOTE: Should we update the cached mesh geometry on the coordinateless function? If so why?
+        """
         new_mesh_geometry._coordinates._as_mesh_geometry = self.vom._coordinates._as_mesh_geometry # Set weak ref to the original mesh object
         self.vom._coordinates = new_mesh_geometry._coordinates 
         
-        # Function (WithGeometry)
-        # self.vom._coordinates_function = new_mesh_geometry._coordinates_function
-        # Rebind new topological FS to old MeshGeometry object
+        # Recreate new WithGeometry Functions storing the physical and reference coordinates
+        self.vom._coordinates_function = new_mesh_geometry._coordinates_function
+
         V = functionspaceimpl.WithGeometry(new_mesh_geometry._coordinates.function_space(), self.vom)
         self.vom._coordinates_function = function.Function(V, val=new_mesh_geometry._coordinates)
-
-        # Remove cached `coordinates` so they are rebuilt from the new topology.
-        if "coordinates" in self.vom.__dict__:
-            del self.vom.__dict__["coordinates"]
-
-        # --Recreate reference coordinates as a WithGeometry Function--
-        # First clear cached reference coordinates 
-        if "reference_coordinates" in self.vom.__dict__:
-            del self.vom.__dict__["reference_coordinates"]
-        if "_reference_coordinates" in self.vom.__dict__:
-            del self.vom.__dict__["_reference_coordinates"]
 
         parent_tdim = self.parent_mesh.topological_dimension
         ref_coords_fs = functionspace.VectorFunctionSpace(new_vom_topology, "DG", 0, dim=parent_tdim,)
@@ -571,27 +575,28 @@ class VertexOnlyMeshUpdater:
         )
         refV = functionspaceimpl.WithGeometry(ref_coords_fs, self.vom)
         self.vom.reference_coordinates = function.Function(refV,val=ref_coords_top)
+        """
+        
+        # Update the WithGeometry Functions storing the physical and reference coordinates
+        # First, update the FS and migrate data of surviving particles
+        self.vom._coordinates_function._match_mesh_topology_version()
+        self.vom.reference_coordinates._match_mesh_topology_version()
 
-        # --Clear cached topology-derived attributes on both the topology object and the mesh object--
+        # Then update the data (using the CoordinatelessFunctions supplied by the new MeshGeometry)
+        # Physical coordinates
+        new_mesh_geometry._coordinates._as_mesh_geometry = self.vom._coordinates._as_mesh_geometry # Set weak ref to the original mesh object
+        self.vom._coordinates = new_mesh_geometry._coordinates 
+        self.vom._coordinates_function._data = new_mesh_geometry._coordinates
+
+        # Reference coordinates
+        self.vom.reference_coordinates._data = new_mesh_geometry.reference_coordinates._data
+
+        # --Clear cached topology-derived attributes on both the topology object and the MeshGeometry object--
         self._invalidate_topology_properties()
         
         # --Clear geometry caches so they are rebuilt from the new coordinate field--
         self.vom._spatial_index = None
         self.vom._bounding_box_coords = None
         self.vom._saved_coordinate_dat_version = self.vom.coordinates.dat.dat_version
-
-        # --Increment VOM version number--
-        # TODO: this has to be a collective operation
-        if not hasattr(self.vom, "_topology_version"):
-            self.vom._topology_version = 0
-        self.vom._topology_version += 1
-
-        # Initialize the dictionary that stores the one-step SFs 
-        # This is done lazily, i.e., the first time the VOM gets rebuilt.
-        if not hasattr(self.vom, "_topology_step_sfs"):
-            self.vom._topology_step_sfs = {}
-
-        # One-step SF maps version k (new) -> version k-1 (old) stored under the key k
-        self.vom._topology_step_sfs[self.vom._topology_version] = self.vom.input_ordering_sf  
 
         return self.vom
