@@ -492,39 +492,18 @@ class VertexOnlyMeshUpdater:
         from firedrake.mesh import (
             make_vom_from_vom_topology,
             _generate_default_mesh_reference_coordinates_name,
+            coordinates_from_topology
         )
+        import finat.ufl
 
         new_vom_topology = self._rebuild_topology(absorbed_vom_indices, new_coords)
-        
-        # Stash one-step lineage
-        # If using point mappings, we need to store a history of mappings
-        """
-        Suppose mesh versions evolve as follow:
-	        - version 0 -> rebuild -> version 1 (stash mapping 0->1)
-            - version 1 -> rebuild -> version 2 (stash mapping 1-> 2, overwriting the old stash)
-
-	    a Function created at version 1 can migrate to version 2 using the current stash
-	    a Function created at version 0 and first accessed at version 2 cannot migrate, because the stash no longer contains 0->1 and 0->2 is not available)
-        """
-        # self.vom._topology_lineage = {
-        #     "from_version": old_version,
-        #     "old_to_new_point_mapping": old_to_new_point_mapping,
-        # }
 
         # --Build a new temporary MeshGeometry object around the new topology--
-        tolerance = getattr(self.vom, "_tolerance", self.parent_mesh.tolerance)
-        new_mesh_geometry = make_vom_from_vom_topology(new_vom_topology, self.vom.name, tolerance)
-
-        # NOTE: `_parent_mesh` is a property of a MeshGeometry object defined with a setter method, so we can set it explicitly.
-        # MeshGeometry inherits from ufl.Mesh. 
-        # UFL objects are meant to be immutable symbolic objects with a stable identity (used for compilation, subexpression elimination etc.)
-        # Hence, the mutable properties of a MeshGeometry object are stored in a ufl_cargo() which is intended to store non-symbolic states without breaking UFL's expectations about the mesh object.
-        new_mesh_geometry._parent_mesh = self.parent_mesh
+        # tolerance = getattr(self.vom, "_tolerance", self.parent_mesh.tolerance)
+        # new_mesh_geometry = make_vom_from_vom_topology(new_vom_topology, self.vom.name, tolerance)
 
         # --Attach the new topology to the old MeshGeometry object--
         self.vom.topology = new_vom_topology
-        self.vom._parent_mesh = self.parent_mesh
-        self.vom._tolerance = tolerance
 
         # Increment the VOM topology version
         # TODO: this has to be a collective operation
@@ -536,7 +515,6 @@ class VertexOnlyMeshUpdater:
         # This is done lazily, i.e., the first time the VOM gets rebuilt.
         if not hasattr(self.vom, "_topology_step_sfs"):
             self.vom._topology_step_sfs = {}
-
         # One-step SF maps version k (new) -> version k-1 (old) stored under the key k
         self.vom._topology_step_sfs[self.vom._topology_version] = self.vom.input_ordering_sf
 
@@ -547,10 +525,8 @@ class VertexOnlyMeshUpdater:
         # So `_coordinates` is just a vector of numbers laid out in the FS DoF layout. It can exist independently of the mesh.
         # When we access the `mesh.coordinates` field, Firedrake wraps that coordinateless fucnction in a `WithGeometry` function which binds it to the mesh geometry.
 
-        
-        # Update the CoordinatelessFunction storing physical coordinates
-        # NOTE: Should we update the cached mesh geometry on the coordinateless function? If so why?
         """
+        # Update the CoordinatelessFunction storing physical coordinates
         new_mesh_geometry._coordinates._as_mesh_geometry = self.vom._coordinates._as_mesh_geometry # Set weak ref to the original mesh object
         self.vom._coordinates = new_mesh_geometry._coordinates 
         
@@ -582,14 +558,30 @@ class VertexOnlyMeshUpdater:
         self.vom._coordinates_function._match_mesh_topology_version()
         self.vom.reference_coordinates._match_mesh_topology_version()
 
-        # Then update the data (using the CoordinatelessFunctions supplied by the new MeshGeometry)
+        # Then update the data by creating new CoordinatelessFunctions (without needing to create a new MeshGeometry object)
         # Physical coordinates
-        new_mesh_geometry._coordinates._as_mesh_geometry = self.vom._coordinates._as_mesh_geometry # Set weak ref to the original mesh object
-        self.vom._coordinates = new_mesh_geometry._coordinates 
-        self.vom._coordinates_function._data = new_mesh_geometry._coordinates
+        gdim = self.vom.topology.topology_dm.getCoordinateDim()
+        cell = self.vom.topology.ufl_cell()
+        element = finat.ufl.VectorElement("DG", cell, 0, dim=gdim)
+        new_coordinates = coordinates_from_topology(self.vom.topology, element)
+        self.vom._coordinates = new_coordinates
+        self.vom._coordinates_function._data = new_coordinates
 
         # Reference coordinates
-        self.vom.reference_coordinates._data = new_mesh_geometry.reference_coordinates._data
+        parent_tdim = self.parent_mesh.topological_dimension
+        ref_coords_fs = functionspace.VectorFunctionSpace(new_vom_topology, "DG", 0, dim=parent_tdim)
+        ref_coords_data = dmcommon.reordered_coords(
+            new_vom_topology.topology_dm,
+            ref_coords_fs.dm.getDefaultSection(),
+            (new_vom_topology.num_vertices(), parent_tdim),
+            reference_coord=True,
+        )
+        ref_coords_top = function.CoordinatelessFunction(
+            ref_coords_fs,
+            val=ref_coords_data,
+            name=_generate_default_mesh_reference_coordinates_name(self.vom.name),
+        )
+        self.vom.reference_coordinates._data = ref_coords_top
 
         # --Clear cached topology-derived attributes on both the topology object and the MeshGeometry object--
         self._invalidate_topology_properties()
