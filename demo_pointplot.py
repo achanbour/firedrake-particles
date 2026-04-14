@@ -52,6 +52,16 @@ axes.set_title("Particles on PDE solution")
 plt.savefig("pointplot_output/demo_3_layered.png")
 plt.close(fig)
 
+# 4. 3D Plot: particles inside a unit cube
+mesh_3d = UnitCubeMesh(5, 5, 5)
+coords_3d = np.random.rand(30, 3)
+vom_3d = VertexOnlyMesh(mesh_3d, coords_3d)
 
-
+fig = plt.figure()
+axes = fig.add_subplot(111, projection='3d')
+triplot(mesh_3d, axes=axes, interior_kw={'alpha': 0.05}, boundary_kw={'alpha': 0.1})
+pointplot(vom_3d, axes=axes, s=40, depthshade=False)
+axes.set_title("3D particle positions")
+plt.savefig("pointplot_output/demo_4_3d.png", dpi=150)
+plt.close(fig)
 
