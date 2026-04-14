@@ -52,8 +52,8 @@ def move_particles_in_ref_space(
         triplot(mesh, axes=axes)
         sc = pointplot(pmesh, axes=axes)
         # prevent matplotlib from rescaling the axes as particles move (making the animation jumpy)
-        # axes.set_xlim(0, 1)
-        # axes.set_ylim(0, 1)
+        axes.set_xlim(0, 1)
+        axes.set_ylim(0, 1)
         axes.set_aspect("equal")
         frame = 0
 
