@@ -51,8 +51,9 @@ def move_particles_in_ref_space(
         fig, axes = plt.subplots()
         triplot(mesh, axes=axes)
         sc = pointplot(pmesh, axes=axes)
-        axes.set_xlim(0, 1)
-        axes.set_ylim(0, 1)
+        # prevent matplotlib from rescaling the axes as particles move (making the animation jumpy)
+        # axes.set_xlim(0, 1)
+        # axes.set_ylim(0, 1)
         axes.set_aspect("equal")
         frame = 0
 
@@ -287,7 +288,7 @@ def move_particles_in_ref_space(
             pmesh.coordinates.dat.data_wo[:] = new_phys_coords.dat.data_ro
 
         if plot:
-            sc.set_offset(pmesh.coordinates.dat.data_ro)
+            sc.set_offsets(pmesh.coordinates.dat.data_ro)
             plt.savefig(f"output/frame_{frame:04d}.png", dpi=150)
             frame += 1
 
