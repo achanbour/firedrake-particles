@@ -2,7 +2,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 from firedrake import *
-from firedrake.pyplot import triplot, pointplot
+from firedrake.pyplot import triplot, pointplot, quiver_vom
 
 os.makedirs("pointplot_output", exist_ok=True)
 np.random.seed(42)
@@ -32,7 +32,7 @@ triplot(mesh, axes=axes)
 sc = pointplot(vom, function=f, axes=axes, cmap="plasma")
 fig.colorbar(sc, ax=axes, label="x-coordinate")
 axes.set_aspect("equal")
-axes.set_title("Particles coloured by scalar field")
+axes.set_title("Particles coloured by a scalar field")
 plt.savefig("pointplot_output/demo_2_scalar_field.png", dpi=150)
 plt.close(fig)
 
@@ -62,6 +62,24 @@ axes = fig.add_subplot(111, projection='3d')
 triplot(mesh_3d, axes=axes, interior_kw={'alpha': 0.05}, boundary_kw={'alpha': 0.1})
 pointplot(vom_3d, axes=axes, s=40, depthshade=False)
 axes.set_title("3D particle positions")
+axes.set_aspect("equal")
 plt.savefig("pointplot_output/demo_4_3d.png", dpi=150)
+plt.close(fig)
+
+# 5. Plot a vector field on particles
+mesh = UnitSquareMesh(10, 10)
+coords = np.random.rand(20, 2)
+vom = VertexOnlyMesh(mesh, coords)
+
+V_vec = VectorFunctionSpace(vom, "DG", 0, dim=2)
+v = Function(V_vec)
+v.dat.data_wo[:] = vom.coordinates.dat.data_ro - 0.5 # point away from the centre at (0.5, 0.5)
+
+fig, axes = plt.subplots()
+triplot(mesh, axes=axes)
+pointplot(vom, axes=axes)
+quiver_vom(v, axes=axes)
+axes.set_title("Particles with a vector field")
+plt.savefig("pointplot_output/demo_5_vector_field.png", dpi=150)
 plt.close(fig)
 
