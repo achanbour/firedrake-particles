@@ -2,4 +2,4 @@
 .vscode/
 __pycache__/
 output/
-.mp4
+*.mp4
