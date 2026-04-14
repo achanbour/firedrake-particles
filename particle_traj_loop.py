@@ -5,7 +5,7 @@ import warnings
 from update_vom import VertexOnlyMeshUpdater, EmptyVOMError
 from particle_time_stepper import ForwardEulerTimeStepper
 from particle_logger import ParticleLogger
-from plot_vom import plot_particles_snapshot
+# from plot_vom import plot_particles_snapshot
 
 def move_particles_in_ref_space(
         pmesh, mesh, v_fn, dt, T, t=0.0, 
@@ -44,8 +44,19 @@ def move_particles_in_ref_space(
     particle_ids = np.arange(pmesh.num_vertices())
     removed_particles = []
 
+    # Initialise plot
+    if plot:
+        import matplotlib.pyplot as plt
+        from firedrake.pyplot import triplot, pointplot
+        fig, axes = plt.subplots()
+        triplot(mesh, axes=axes)
+        sc = pointplot(pmesh, axes=axes)
+        axes.set_xlim(0, 1)
+        axes.set_ylim(0, 1)
+        axes.set_aspect("equal")
+        frame = 0
+
     outer_time_loop = 0
-    frame = 0
     while t < T - 1e-12:
         N = pmesh.num_vertices()
 
@@ -275,11 +286,15 @@ def move_particles_in_ref_space(
             # This is simpler than calling pmesh_updater.update_vom()
             pmesh.coordinates.dat.data_wo[:] = new_phys_coords.dat.data_ro
 
-        if plot == True:
-            plot_particles_snapshot(mesh, pmesh, frame=frame)
+        if plot:
+            sc.set_offset(pmesh.coordinates.dat.data_ro)
+            plt.savefig(f"output/frame_{frame:04d}.png", dpi=150)
             frame += 1
 
         t += dt
+    
+    if plot:
+        plt.close(fig)
 
     return t, removed_particles
 
