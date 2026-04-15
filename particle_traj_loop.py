@@ -7,12 +7,12 @@ from particle_time_stepper import ForwardEulerTimeStepper
 from particle_logger import ParticleLogger
 # from plot_vom import plot_particles_snapshot
 
-def move_particles_in_ref_space(
+def solve_particle_traj_in_ref_space(
         pmesh, mesh, v_fn, dt, T, t=0.0, 
         max_inner_iters=50, 
         max_bisection_iters=None,
         bary_tol=1e-7 ,
-        time_tol=1e-8,
+        time_tol=1e-7,
         plot=False,
         log_level="info"):
     """
@@ -163,8 +163,6 @@ def move_particles_in_ref_space(
                     "bary_cross": bary_cross,
                     "X_cross": X_cross,
                 }, indices=failed_global, level="info")
-
-                # logger.inspect_particles()
             
                 # From the barycentric coords. at the crossing point, determine which edge the particle crossed
                 local_crossed_edge_ids = np.full(len(active_indices), None, dtype=object)
@@ -240,7 +238,7 @@ def move_particles_in_ref_space(
             # 5) Re-enter the inner loop with new ref. coords., parent cells and remaining dt_left
 
             if inner_loop_iter == max_inner_iters:
-                still_active = np.where(dt_left > 1e-6)[0] # same time tol. as bisection
+                still_active = np.where(dt_left > time_tol)[0]
                 print(
                     f"\n[warning] Inner loop hit max_inner_iters={max_inner_iters}. "
                     f"Remaining active particles: {still_active}, dt_left: {dt_left[still_active]}\n"
@@ -301,6 +299,7 @@ def move_particles_in_ref_space(
         plt.close(fig)
 
     return t, removed_particles
+
 
 BISECTION_COUNT = 0
 def bisect_crossing_time(
