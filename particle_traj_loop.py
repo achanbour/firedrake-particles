@@ -11,7 +11,8 @@ def move_particles_in_ref_space(
         pmesh, mesh, v_fn, dt, T, t=0.0, 
         max_inner_iters=50, 
         max_bisection_iters=None,
-        bary_tol=1e-6,
+        bary_tol=1e-7 ,
+        time_tol=1e-8,
         plot=False,
         log_level="info"):
     """
@@ -76,7 +77,7 @@ def move_particles_in_ref_space(
         while inner_loop_iter < max_inner_iters:            
             # Check if there are any active particles left
             # A particle remains active if it has more than the equivalent of one bisection tol. of remaining time
-            active = dt_left > 1e-6
+            active = dt_left > time_tol
             if not np.any(active):
                 break
 
@@ -150,9 +151,9 @@ def move_particles_in_ref_space(
                 2. Compute reference coordinates in the new cell.
                 """
                 if max_bisection_iters is not None:
-                    t_cross, bary_cross, X_cross = bisect_crossing_time(stepper, dt_left, ref_cell, failed_global, bary_tol=bary_tol, max_iters=max_bisection_iters)
+                    t_cross, bary_cross, X_cross = bisect_crossing_time(stepper, dt_left, ref_cell, failed_global, bary_tol=bary_tol, time_tol=time_tol, max_iters=max_bisection_iters)
                 else:
-                    t_cross, bary_cross, X_cross = bisect_crossing_time(stepper, dt_left, ref_cell, failed_global, bary_tol=bary_tol)
+                    t_cross, bary_cross, X_cross = bisect_crossing_time(stepper, dt_left, ref_cell, failed_global, bary_tol=bary_tol, time_tol=time_tol)
                 
                 dt_left[failed_global] -= t_cross
 
@@ -171,15 +172,17 @@ def move_particles_in_ref_space(
                     local_crossed_edge_ids[local_i] = int(np.argmin(abs(bary_cross[idx])))
 
                     # Catch the degenerate case when a particle lands on a vertex
-                    # two barycentric coords are 0 so argmin is ambiguous
-                    near_zero = abs(bary_cross[idx]) < bary_tol
-                    if np.count_nonzero(near_zero) >= 2:
-                        warnings.warn(
-                            f"Degenerate crossing: particle landed on a vertex.\n"
-                            f"bary_cross = {bary_cross[idx]}\n"
-                            f"failed_global particle = {failed_global[idx]}"
-                        )
-                        breakpoint()
+                    # NOTE: In this case, `np.argmin` returns the index of the first occurence 
+                    # so an edge it deterministically picks one edge.
+
+                    # near_zero = abs(bary_cross[idx]) < bary_tol
+                    # if np.count_nonzero(near_zero) >= 2:
+                    #     warnings.warn(
+                    #         f"Degenerate crossing: particle landed on a vertex.\n"
+                    #         f"bary_cross = {bary_cross[idx]}\n"
+                    #         f"failed_global particle = {failed_global[idx]}"
+                    #     )
+                    #     breakpoint()
 
                 # Identify the next cells to move the particles to given the crossed facets
                 with PETSc.Log.Event("LookupCellTransitions"):
@@ -306,7 +309,7 @@ def bisect_crossing_time(
         ref_cell, 
         failed_global,
         bary_tol,
-        time_tol=1e-6,
+        time_tol,
         max_iters=30
 ):
     """Bisection algorithm that detects particle crossings.
