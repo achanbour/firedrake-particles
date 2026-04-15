@@ -113,17 +113,19 @@ class ParticleLogger:
         for k in arrays:
             widths[k] = max(len(k), max(len(r) for r in rows[k]))
 
+        pid_width = max(len(str(indices[i] if indices is not None else i)) for i in range(N))
+        pid_width = max(pid_width, len("pid"))
+
         # Print data
-        # One block for each particle
-        header = "| " + " | ".join(f"{k:<{widths[k]}}" for k in arrays) + " |"
+        # One row for each particle
+        header = f"| {'pid':<{pid_width}} | " + " | ".join(f"{k:<{widths[k]}}" for k in arrays) + " |"
         div = "-" * max(len(header), len(label) + 4)
 
         print(f"\n{div}\n {label}\n{div}")
+        print(header)
         for i in range(N):
             block_label = indices[i] if indices is not None else i
-            print(f" ------- {block_label} -------")
-            print(header)
-            print("| " + " | ".join(f"{rows[k][i]:<{widths[k]}}" for k in arrays) + " |")
+            print(f"| {block_label:<{pid_width}} | " + " | ".join(f"{rows[k][i]:<{widths[k]}}" for k in arrays) + " |")
         print(div)
 
 
