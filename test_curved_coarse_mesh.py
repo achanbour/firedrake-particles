@@ -30,5 +30,5 @@ print("Curved mesh coords: ", curved_mesh.coordinates.dat.data_ro[:5])
 
 fig, axes = plt.subplots()
 triplot(curved_mesh, axes=axes)
-axes.legend()
+# axes.legend()
 plt.show()

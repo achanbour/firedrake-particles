@@ -39,5 +39,5 @@ triplot(curved_mesh, axes=axes)
 axes.legend()
 plt.show()
 
-output = VTKFile(f"plots/curved_midpoints.pvd")
-output.write(curved_mesh)
+# output = VTKFile(f"plots/curved_midpoints.pvd")
+# output.write(curved_mesh)

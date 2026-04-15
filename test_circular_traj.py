@@ -13,7 +13,7 @@ r = 0.25 # radius
 c = np.array([0.5, 0.5]) # center
 theta = np.linspace(0, 2*np.pi, N, endpoint=False) # initial angles, evenly spaced on [0, 2pi)
 
-# Initial positions
+# Initial positions: points lying on a circle of radius r centered at c
 x0 = c[0] + r*np.cos(theta)
 y0 = c[1] +r*np.sin(theta)
 q0 = np.column_stack([x0, y0])
