@@ -21,8 +21,7 @@ x0 = np.column_stack([x_diag, x_diag])
 
 # Velocity
 # Speed controls how many crossings occur per time step
-# E.g., For speed=0.7 and h=0.2, approx. 3-4 facets crossed per unit of time
-v0 = np.array( [0.45, 0.25])
+v0 = np.array([0.45, 0.25])
 
 # Time parameters
 # dt controls how many crossings occur (large: allow more crossings, small: few crossings)
@@ -31,10 +30,10 @@ v0 = np.array( [0.45, 0.25])
 # At T = 2.0, only one particle remains
 # At T = 2.4, the remaining particle leaves the domain so new VOM is empty
 # ---
-T = 2.4 # 1.0, 1.5, 2.0
+T = 1.5 # 1.0, 1.5, 2.0
 dt = 0.1
 
-bisection_iters = [1, 2, 4, 8, 16, 30] # 20
+bisection_iters = [1, 2, 4, 8, 16, 20, 30] # 20
 errors = []
 bisection_calls = []
 
@@ -83,6 +82,10 @@ plt.xlabel("Number of bisection iterations")
 plt.ylabel("L2 error")
 plt.title("Bisection convergence")
 plt.savefig("plots/bisection_error.png")
+
+# NOTE: bisection error findings:
+# - The error decreases with the number of bisection iterations and saturates at `time_tol`
+
 
 
 
