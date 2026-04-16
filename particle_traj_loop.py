@@ -381,7 +381,7 @@ def bisect_crossing_time(
             break
     else:
         raise BisectionNotConvergedError(
-            f"Bisection did not converge within {max_iters} iterations."
+            f"Bisection did not converge within {max_iters} iterations using time_tol={time_tol}"
         )
     
     # Extract crossing times
