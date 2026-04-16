@@ -1,7 +1,7 @@
 from firedrake import *
 import pickle
 import numpy as np
-from particle_traj_loop import move_particles_in_ref_space
+from particle_traj_loop import solve_particle_traj_in_ref_space
 from update_vom import VertexOnlyMeshUpdater
 
 # Pickle file stores all the field dats after the VOM has been rebuilt
@@ -35,7 +35,7 @@ velocity_func = Function(V)
 velocity_func.dat.data_wo[:] = particle_velocity
 
 print("Initial particle positions: ", particle_vom.coordinates.dat.data_ro)
-T_final, removed_particles = move_particles_in_ref_space(particle_vom, mesh, v_fn=velocity_func, t=0.04, dt=0.01, T=0.05)
+T_final, removed_particles = solve_particle_traj_in_ref_space(particle_vom, mesh, v_fn=velocity_func, t=0.04, dt=0.01, T=0.05)
 print("Removed particles: ", removed_particles)
 # print("Final particle reference positions: ", particle_vom.reference_coordinates.dat.data_ro)
 print("Final particle positions: ", particle_vom.coordinates.dat.data_ro)

@@ -1,6 +1,4 @@
 from firedrake import *
-from firedrake.pyplot import triplot
-import matplotlib.pyplot as plt
 import particle_traj_loop as ptl
 import numpy as np
 
@@ -31,7 +29,7 @@ for n in num_cells:
 
     ptl.BISECTION_COUNT = 0 # reset global counter
 
-    T_final, removed_particles = ptl.move_particles_in_ref_space(particle_vom, mesh, u, dt, dt, t=0.0, plot=False)
+    T_final, removed_particles = ptl.solve_particle_traj_in_ref_space(particle_vom, mesh, u, dt, dt, t=0.0, plot=False)
     
     print()
     print("Final particle position: ", particle_vom.coordinates.dat.data_ro)

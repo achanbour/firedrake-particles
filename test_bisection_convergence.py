@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 """
-This experiment focusses on the bisection error in the particle trajectory loop.
+This experiment focusses on the dependence of the error in the particle trajectory solver on the bisection accuracy.
 
 Using constant velocity, the numerical trajectory obtained through the Forward Euler scheme is exact at each time step.
 Any error is therefore entirely attributable to bisection, used to resolve cell crossings in each step.
@@ -26,14 +26,10 @@ v0 = np.array([0.45, 0.25])
 # Time parameters
 # dt controls how many crossings occur (large: allow more crossings, small: few crossings)
 # T controls how much crossing error gets accumulated (longer is better to accumulate signal?)
-# ---
-# At T = 2.0, only one particle remains
-# At T = 2.4, the remaining particle leaves the domain so new VOM is empty
-# ---
-T = 1.5 # 1.0, 1.5, 2.0
+T = 1.0
 dt = 0.1
 
-bisection_iters = [1, 2, 4, 8, 16, 20, 30] # 20
+bisection_iters = [28, 30, 40, 50]
 errors = []
 bisection_calls = []
 
@@ -55,7 +51,7 @@ for iter in bisection_iters:
     import particle_traj_loop as ptl
     ptl.BISECTION_COUNT = 0  # reset global counter
 
-    T_final, removed = ptl.move_particles_in_ref_space(
+    T_final, removed = ptl.solve_particle_traj_in_ref_space(
         particle_vom, mesh, v, dt, T, t=0.0,
         max_bisection_iters=iter,
         plot=False
@@ -83,11 +79,11 @@ plt.ylabel("L2 error")
 plt.title("Bisection convergence")
 plt.savefig("plots/bisection_error.png")
 
-# NOTE: bisection error findings:
-# - The error decreases with the number of bisection iterations and saturates at `time_tol`
-
-
-
+# NOTE:
+# - When the bisection algorithm does converge, its error should be of the order of at most `time_tol`.
+# - The number of iterations needed by bisection to converge depends on `time_tol`.
+# (run the experiment for pairs of values (time_tol, max_bisection_iters))
+# - Once bisection converged, the number of iterations does affected the final error in the numerical solution.
 
 
 

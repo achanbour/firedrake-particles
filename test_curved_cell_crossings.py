@@ -1,5 +1,4 @@
 from firedrake import *
-import matplotlib.pyplot as plt
 import particle_traj_loop as ptl
 import numpy as np
 
@@ -57,7 +56,7 @@ for n in num_cells:
         u.dat.data[:] = u0
 
         ptl.BISECTION_COUNT = 0 # reset global counter
-        T_final, removed_particles = ptl.move_particles_in_ref_space(particle_vom, curved_mesh, u, dt, T, t=0.0, plot=False)
+        T_final, removed_particles = ptl.solve_particle_traj_in_ref_space(particle_vom, curved_mesh, u, dt, T, t=0.0, plot=False)
 
         x_final_expected = x0_vom + T_final * u.dat.data_ro
         

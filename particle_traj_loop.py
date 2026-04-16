@@ -7,12 +7,17 @@ from particle_time_stepper import ForwardEulerTimeStepper
 from particle_logger import ParticleLogger
 # from plot_vom import plot_particles_snapshot
 
+class ParticleCrossingLoopNotConverged(RuntimeError):
+    """Raised when cell crossings within a single time step are not resolved within 
+    the maximum number of iterations."""
+    pass
+
 def solve_particle_traj_in_ref_space(
         pmesh, mesh, v_fn, dt, T, t=0.0, 
         max_inner_iters=50, 
         max_bisection_iters=None,
-        bary_tol=1e-7 ,
-        time_tol=1e-7,
+        bary_tol=1e-9,
+        time_tol=1e-9,
         plot=False,
         log_level="info"):
     """
@@ -129,13 +134,7 @@ def solve_particle_traj_in_ref_space(
                 dt_left[passed_global] = 0
                 ref_coords_register[passed_global] = trial_ref_pos_fn.dat.data_ro[passed_global]
 
-                # logger.inspect_particles("passed particles", {
-                #     "dt_left": dt_left[passed_global],
-                #     "new_ref_coords": ref_coords_register[passed_global]
-                # }, level="info")
-
                 logger.print_particles("passed particles", {
-                    "dt_left ": dt_left[passed_global],
                     "new_ref_coords": ref_coords_register[passed_global],
                 }, indices=passed_global, level="info")
 
@@ -154,9 +153,9 @@ def solve_particle_traj_in_ref_space(
                     t_cross, bary_cross, X_cross = bisect_crossing_time(stepper, dt_left, ref_cell, failed_global, bary_tol=bary_tol, time_tol=time_tol, max_iters=max_bisection_iters)
                 else:
                     t_cross, bary_cross, X_cross = bisect_crossing_time(stepper, dt_left, ref_cell, failed_global, bary_tol=bary_tol, time_tol=time_tol)
-                
-                dt_left[failed_global] -= t_cross
 
+                dt_left[failed_global] -= t_cross
+                
                 logger.print_particles("failed particles", {
                     "dt_left": dt_left[failed_global],
                     "t_cross": t_cross,
@@ -165,22 +164,54 @@ def solve_particle_traj_in_ref_space(
                 }, indices=failed_global, level="info")
             
                 # From the barycentric coords. at the crossing point, determine which edge the particle crossed
+                # NOTE: by default, `np.argmin` picks deterministically the edge of the first bary coord that's zero
+                # That's fine when bisection finds a crossing point at a vertex but may cause problems if that's the point
+                # the particle started on (the particle essentially gets stuck being sent back and forth between the two vertices).
+                
                 local_crossed_edge_ids = np.full(len(active_indices), None, dtype=object)
+
+                # Separate cases where the crossing is on a vertex or on an edge
+                # this introduces a coupling between bary_tol and time_tol which isn't great
+                """
                 for idx, local_i in enumerate(failed_local):
-                    local_crossed_edge_ids[local_i] = int(np.argmin(abs(bary_cross[idx])))
+                    # NOTE: This line will only detect near-zero bary coord. if bary_tol is large enough relative
+                    # to the residual from bisection.
+                    zero_bary_coord_idx = np.where(abs(bary_cross[idx]) < bary_tol)[0]
+                    if len(zero_bary_coord_idx) == 1:
+                        # On an edge: 
+                        local_crossed_edge_ids[local_i] = int(np.argmin(abs(bary_cross[idx])))
+                    else:
+                        # On a vertex — two edges are candidates,
+                        # pick the edge whose facet normal points in the same direction as the velocity vector
+                        crossed_edge = int(zero_bary_coord_idx[0]) # fallback
+                        v_ref = invJ_vom.dat.data_ro[failed_global[idx]] @ stepper.v.dat.data_ro[failed_global[idx]]
+                        for edge_id in zero_bary_coord_idx:
+                            normal = ref_cell.compute_normal(edge_id)
+                            if np.dot(normal, v_ref) > 0:
+                                crossed_edge = edge_id
+                                break
 
-                    # Catch the degenerate case when a particle lands on a vertex
-                    # NOTE: In this case, `np.argmin` returns the index of the first occurence 
-                    # so an edge it deterministically picks one edge.
+                        local_crossed_edge_ids[local_i] = crossed_edge
+                """
 
-                    # near_zero = abs(bary_cross[idx]) < bary_tol
-                    # if np.count_nonzero(near_zero) >= 2:
-                    #     warnings.warn(
-                    #         f"Degenerate crossing: particle landed on a vertex.\n"
-                    #         f"bary_cross = {bary_cross[idx]}\n"
-                    #         f"failed_global particle = {failed_global[idx]}"
-                    #     )
-                    #     breakpoint()
+                # Alternatively, always check that the selected edge agrees with the direction the velocity points to
+                # so the particle never gets stuck.
+                for idx, local_i in enumerate(failed_local):
+                    crossed_edge = int(np.argmin(abs(bary_cross[idx]))) # starting edge is the one corresponding to the smallest bary coord
+
+                    v_ref = invJ_vom.dat.data_ro[failed_global[idx]] @ stepper.v.dat.data_ro[failed_global[idx]]
+                    normal = ref_cell.compute_reference_normal(1, crossed_edge)
+                    if np.dot(v_ref, normal) <= 0:
+                        # check other edges
+                        for edge_id in range(len(bary_cross[idx])):
+                            if edge_id == crossed_edge:
+                                continue
+                            normal = ref_cell.compute_reference_normal(1, edge_id)
+                            if np.dot(v_ref, normal) > 0:
+                                crossed_edge = edge_id
+                                break
+                    local_crossed_edge_ids[local_i] = crossed_edge
+
 
                 # Identify the next cells to move the particles to given the crossed facets
                 with PETSc.Log.Event("LookupCellTransitions"):
@@ -239,11 +270,16 @@ def solve_particle_traj_in_ref_space(
 
             if inner_loop_iter == max_inner_iters:
                 still_active = np.where(dt_left > time_tol)[0]
-                print(
-                    f"\n[warning] Inner loop hit max_inner_iters={max_inner_iters}. "
-                    f"Remaining active particles: {still_active}, dt_left: {dt_left[still_active]}\n"
+                logger.print_particles(
+                    "Non-converged particles",
+                    {"dt_left": dt_left[still_active]},
+                    indices=still_active,
+                    level="info",
                 )
-                break
+                breakpoint()
+                raise ParticleCrossingLoopNotConverged(
+                    f"Cell crossings were not resolved within {max_inner_iters} iterations."
+                )
 
         # Now update the VOM by removing all boundary particles
         # i.e., particles that have hit an exterior boundary in one of the iterations above.
@@ -259,15 +295,7 @@ def solve_particle_traj_in_ref_space(
 
         if len(boundary_particles_current) != 0:
             # TODO: Trigger exchange: for each rank constructs 2 sets of particles: absorbed (left mesh domain or crossed partition boundary) + arrived
-            # TODO: Handle the case when the VOM becomes empty?
-            try:
-                pmesh_updater.rebuild_vom(absorbed_vom_indices=boundary_particles_current, new_coords=new_phys_coords)
-            except EmptyVOMError:
-                print(
-                    "\nAll particles have been removed — the particle VertexOnlyMesh is empty. "
-                    "Terminating the time loop."
-                )
-                break
+            pmesh_updater.rebuild_vom(absorbed_vom_indices=boundary_particles_current, new_coords=new_phys_coords)
 
             # Update/rebuild all fields eagerly (in parallel: once exchange is over)
             # And ensure the stepper stores the updated fields!
@@ -300,6 +328,9 @@ def solve_particle_traj_in_ref_space(
 
     return t, removed_particles
 
+class BisectionNotConvergedError(RuntimeError):
+    """Raised when the bisection algorithm has not converged within the maximum number of allowed iterations"""
+    pass
 
 BISECTION_COUNT = 0
 def bisect_crossing_time(
@@ -323,33 +354,35 @@ def bisect_crossing_time(
     t_lo = np.zeros(n_failed, dtype=float)
     t_hi = dt_left[failed_global].copy()
 
-    # NOTE: bisection assumes that initially (at t_lo=0) all particles start inside their cells
-    # If a particle happens to start on a vertex, bisection returns t_cross = 0 which means that
-    # X_cross is equal to the position the particle started on.
-    # Using a high barycentric tolerance may allow for a particle that's slightly outside to be considered as inside the cell
-    # so we use a low tolerance to avoid this.
+    # NOTE: bisection assumes that initially (at t_lo=0) a particle starts strictly inside its cell
+    # This invariant breaks when a particle starts on a facet or vertex or slightly outside (due to floating point noise)
+    # However, bisection should still find t_cross > 0 provided the particle is pushed into the cell.
 
     for _ in range(max_iters):
         t_mid = (t_lo + t_hi) / 2
 
         stepper.dt.dat.zero()
         stepper.dt.dat.data_wo[failed_global] = t_mid
-
+    
         # Advance only failed particles by mid time substep
         mid_ref_fn = stepper.step()
 
         X_mid = mid_ref_fn.dat.data[failed_global]
         bary_mid = ref_cell.compute_barycentric_coordinates(X_mid)
         inside = np.all(bary_mid >= -bary_tol, axis = 1)
-        
+                
         # For particles inside at the midpoint, advance lower end of the bracket
         t_lo[inside] = t_mid[inside]
-        # For particels outside at the midpoint, advance higher end of the bracket
+        # For particles outside at the midpoint, advance higher end of the bracket
         t_hi[~inside] = t_mid[~inside]
         
         # Early exit if all brackets shrink sufficiently
         if np.max(t_hi - t_lo) < time_tol:
             break
+    else:
+        raise BisectionNotConvergedError(
+            f"Bisection did not converge within {max_iters} iterations."
+        )
     
     # Extract crossing times
     t_cross = t_lo

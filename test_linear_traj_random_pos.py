@@ -1,7 +1,7 @@
 from firedrake import *
 from firedrake.petsc import PETSc
 import numpy as np
-from particle_traj_loop import move_particles_in_ref_space
+from particle_traj_loop import solve_particle_traj_in_ref_space
 
 """
 Deterministic particle trajectory test with random constant velocity (different across particles)
@@ -44,7 +44,7 @@ initial_particle_velocities = v.dat.data_ro.copy()
 # import timeit
 with PETSc.Log.Event("ParticleTrajectoryLoop"):
     # t0 = timeit.default_timer()
-    T_final, removed_particles = move_particles_in_ref_space(particle_vom, mesh, v, dt, T, t=0.0, plot=True)
+    T_final, removed_particles = solve_particle_traj_in_ref_space(particle_vom, mesh, v, dt, T, t=0.0, plot=True)
     # t1 = timeit.default_timer()
     # print(f"[wall_time] {t1 - t0} s")
 print("Final particle positions: ", particle_vom.coordinates.dat.data_ro)

@@ -1,6 +1,6 @@
 from firedrake import *
 import numpy as np
-from particle_traj_loop import move_particles_in_ref_space
+from particle_traj_loop import solve_particle_traj_in_ref_space
 
 """
 Deterministic particle trajectory test with constant velocity (identical for all particles)
@@ -36,7 +36,7 @@ print("Initial particle velocities: ", v0_vom)
 # dt=0.1, t=7.6: 2 particles removed
 T = 7.6
 dt = 0.1
-T_final, removed_particles = move_particles_in_ref_space(particle_vom, mesh, v, dt, T, t=0.0, plot=False)
+T_final, removed_particles = solve_particle_traj_in_ref_space(particle_vom, mesh, v, dt, T, t=0.0, plot=False)
 
 print()
 print("Final particle positions: ", particle_vom.coordinates.dat.data_ro)

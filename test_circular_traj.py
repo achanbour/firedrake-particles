@@ -1,6 +1,6 @@
 from firedrake import *
 import numpy as np
-from particle_traj_loop import move_particles_in_ref_space
+from particle_traj_loop import solve_particle_traj_in_ref_space
 
 """
 Deterministic particle trajectory test using a solid body rotation field with constant angular speed
@@ -40,7 +40,7 @@ v.interpolate(v_expr)
 # Reconstruct the particle's trajectory
 T = 1
 dt = 0.01
-T_final, removed_particles = move_particles_in_ref_space(vom, mesh, v, dt, T, t=0.0, plot=True)
+T_final, removed_particles = solve_particle_traj_in_ref_space(vom, mesh, v, dt, T, t=0.0, plot=True)
 print("Final particle positions: ", vom.coordinates.dat.data_ro)
 print("Removed particles: ", removed_particles)
 
