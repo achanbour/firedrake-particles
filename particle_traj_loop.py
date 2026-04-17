@@ -15,9 +15,10 @@ class ParticleCrossingLoopNotConverged(RuntimeError):
 def solve_particle_traj_in_ref_space(
         pmesh, mesh, v_fn, dt, T, t=0.0, 
         max_inner_iters=50, 
-        max_bisection_iters=None,
+        max_bisection_iters=30,
         bary_tol=1e-9,
-        time_tol=1e-9,
+        abs_time_tol=1e-9,
+        rel_time_tol=1e-9,
         plot=False,
         log_level="info"):
     """
@@ -79,10 +80,13 @@ def solve_particle_traj_in_ref_space(
         inner_loop_iter = 0
         active_iters = np.zeros(N, dtype=int)
 
+        effective_time_tol = max(abs_time_tol, rel_time_tol * dt)
+
         while inner_loop_iter < max_inner_iters:            
             # Check if there are any active particles left
-            # A particle remains active if it has more than the equivalent of one bisection tol. of remaining time
-            active = dt_left > time_tol
+            # A particle remains active if it has more than one bisection tol. worth of remaining time
+            # or more than a fraction of the full step it was supposed to take
+            active = dt_left > effective_time_tol
             if not np.any(active):
                 break
 
@@ -149,10 +153,11 @@ def solve_particle_traj_in_ref_space(
                 2. Determine which cell to go to next
                 2. Compute reference coordinates in the new cell.
                 """
-                if max_bisection_iters is not None:
-                    t_cross, bary_cross, X_cross = bisect_crossing_time(stepper, dt_left, ref_cell, failed_global, bary_tol=bary_tol, time_tol=time_tol, max_iters=max_bisection_iters)
-                else:
-                    t_cross, bary_cross, X_cross = bisect_crossing_time(stepper, dt_left, ref_cell, failed_global, bary_tol=bary_tol, time_tol=time_tol)
+                t_cross, bary_cross, X_cross = bisect_crossing_time(
+                        stepper, dt_left, ref_cell, failed_global, 
+                        bary_tol=bary_tol, 
+                        time_tol = effective_time_tol,
+                        max_iters=max_bisection_iters)
 
                 dt_left[failed_global] -= t_cross
                 
@@ -340,7 +345,7 @@ def bisect_crossing_time(
         failed_global,
         bary_tol,
         time_tol,
-        max_iters=30
+        max_iters
 ):
     """Bisection algorithm that detects particle crossings.
     
@@ -357,7 +362,6 @@ def bisect_crossing_time(
     # NOTE: bisection assumes that initially (at t_lo=0) a particle starts strictly inside its cell
     # This invariant breaks when a particle starts on a facet or vertex or slightly outside (due to floating point noise)
     # However, bisection should still find t_cross > 0 provided the particle is pushed into the cell.
-
     for _ in range(max_iters):
         t_mid = (t_lo + t_hi) / 2
 
@@ -381,7 +385,7 @@ def bisect_crossing_time(
             break
     else:
         raise BisectionNotConvergedError(
-            f"Bisection did not converge within {max_iters} iterations using time_tol={time_tol}"
+            f"Bisection did not converge within {max_iters} iterations using time_tol={time_tol}."
         )
     
     # Extract crossing times

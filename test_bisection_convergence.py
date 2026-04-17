@@ -5,8 +5,9 @@ import matplotlib.pyplot as plt
 """
 This experiment investigates the dependence of the error in the numerical solution based on bisection accuracy.
 
-Using constant velocity, the numerical trajectory obtained through the Forward Euler scheme is exact at each time step.
+Using constant velocity, the numerical trajectory obtained using Forward Euler is exact at each time step.
 Any error is therefore entirely attributable to bisection, used to resolve cell crossings in each step.
+Hence we want to make bisection as precise as possible so use absolute time tolerances only.
 """
 # Parent mesh
 # Finer mesh implies smaller cells allowing for potentially more crossings
@@ -29,12 +30,15 @@ T = 1.5
 dt = 0.1
 
 # bisection_iters = [28, 30, 40, 50]
-time_tols = [1e-3, 1e-4, 1e-6, 1e-8, 1e-10, 1e-12, 1e-14, 1e-16]
+
+bary_tol = 1e-16
+rel_time_tol = 0
+abs_time_tols = [1e-3, 1e-4, 1e-6, 1e-8, 1e-10, 1e-12, 1e-14, 1e-16]
 
 errors = []
 bisection_calls = []
 
-for tol in time_tols:
+for abs_time_tol in abs_time_tols:
     # Rebuild fresh mesh and particle VOM for each run
     mesh = UnitSquareMesh(n_cells, n_cells, quadrilateral=False)
     particle_vom = VertexOnlyMesh(mesh, x0)
@@ -54,12 +58,13 @@ for tol in time_tols:
 
     # The number of bisection iterations needed to converge depends on time_tol
     # Since bisection halves the time bracket at each step, it converges once dt/2^n = time_tol
-    max_iter = int(np.ceil(np.log2(dt/tol)))
+    max_iter = int(np.ceil(np.log2(dt/max(abs_time_tol, rel_time_tol * dt))))
     T_final, removed = ptl.solve_particle_traj_in_ref_space(
         particle_vom, mesh, v, dt, T, t=0.0,
         max_bisection_iters=max_iter,
-        time_tol = tol,
-        bary_tol=1e-11,
+        abs_time_tol = abs_time_tol,
+        rel_time_tol = rel_time_tol,
+        bary_tol=bary_tol,
         plot=False
     )
     
@@ -74,16 +79,16 @@ for tol in time_tols:
     errors.append(err)
 
 print("\nBisection convergence summary:")
-print(f"{'time_tol':>12} {'L2 error':>14} {'bisection_calls':>16}")
-for tol, calls, err in zip(time_tols, bisection_calls, errors):
+print(f"{'abs_time_tol':>12} {'L2 error':>14} {'bisection_calls':>16}")
+for tol, calls, err in zip(abs_time_tols, bisection_calls, errors):
     print(f"{tol:>12.0e} {err:>14.6e} {calls:>16d}")
 
 # plt.semilogy(time_tols, errors)
-plt.loglog(time_tols, errors, label="L2 Error")
+plt.loglog(abs_time_tols, errors, label="L2 Error")
 # ref = np.array(time_tols)
 # plt.loglog(ref, ref * (errors[-1]/time_tols[-1]), '--k', alpha=0.75, label="slope 1")
 # plt.legend()
-plt.xlabel("Time tol")
+plt.xlabel("Absolute time tol")
 plt.ylabel("L2 error")
 plt.title("Bisection convergence")
 plt.savefig("plots/bisection_error.png")
@@ -95,3 +100,5 @@ plt.savefig("plots/bisection_error.png")
 #   so error = O(max(bary_tol, time_tol))
 # - The number of bisection iterations is only relevant up to convergence (error is the same once bisection converged).
 # - The error is expected to plateau once time_tol is small enough.
+# - To hit the max. degree of accuracy assuming double precision, use abs_time_tol = 1e-16 and 
+#   bary_tol=1e-16 (anything beyond that will likley be numerically unstable due to floating point noise).
