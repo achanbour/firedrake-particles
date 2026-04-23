@@ -12,6 +12,18 @@ class ParticleCrossingLoopNotConverged(RuntimeError):
     the maximum number of iterations."""
     pass
 
+class ParticleTrajectorySolver():
+    def __init__(self, stepper, cell_crossing_solver):
+        # extract pmesh from the stepper
+        # velocity could be a function of time so may need to pass time params
+        self.stepper = stepper # dt
+        self.cell_crossing_solver = cell_crossing_solver
+    
+    def solve(self, t_start, t_end):
+        pass
+
+# TODO: define abstract classes for stepper and cell crossing solver
+
 def solve_particle_traj_in_ref_space(
         pmesh, mesh, v_fn, dt, T, t=0.0, 
         max_inner_iters=50, 
@@ -54,10 +66,10 @@ def solve_particle_traj_in_ref_space(
     # Initialise plot
     if plot:
         import matplotlib.pyplot as plt
-        from firedrake.pyplot import triplot, pointplot
+        from firedrake.pyplot import triplot, scatter
         fig, axes = plt.subplots()
         triplot(mesh, axes=axes)
-        sc = pointplot(pmesh, axes=axes)
+        sc = scatter(pmesh, axes=axes)
         # prevent matplotlib from rescaling the axes as particles move (making the animation jumpy)
         axes.set_xlim(0, 1)
         axes.set_ylim(0, 1)
@@ -401,6 +413,9 @@ def bisect_crossing_time(
     return t_cross, bary_cross, X_cross
 
 # TODO:
-# - Check robustness of cell crossing with higher order mesh coordinate field
 # - End of particle loop: halo exchange + update all fields eagerly
 
+# NOTE:
+# - To generate an animation of moving particles, either 
+#   save the updated plot at each time step then stich all plots together into a movie using ffmpeg OR 
+#   OR use matplotlib's FuncAnimation like in Burger's equation notebook.
