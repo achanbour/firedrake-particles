@@ -1,47 +1,90 @@
+from abc import ABC, abstractmethod
 from firedrake.interpolation import interpolate, get_interpolator
-from firedrake import Function
-from firedrake.assemble import assemble
+from exceptions import IncompatibleMeshError
 
-STEP_COUNT = 0
-
-class ForwardEulerTimeStepper:
+class ParticleTimeStepper(ABC):
     """
-    Updates particles positions by Forward Euler:
-
-    X(t + dt) = X(t) + J^-1 * v * dt
-
-    where J is the Jacobian of the geometric map F: X -> x, used to pull back the velocity field
-    from physical space to reference space.
+    Abstract base class for particle time steppers that advance particle positions
+    using update expressions defined in reference space.
     """
-    def __init__(self, X, invJ, v, dt):
+    def __init__(self, X, dt, **kwargs):
         self._X = X
-        self._invJ = invJ
-        self._v = v
         self._dt = dt
 
-        # All terms are assumed to be Functions
-        # Check they're all defined on the same mesh (particle VOM)
-        m = X.function_space().mesh()
-        assert invJ.function_space().mesh() == m
-        assert dt.function_space().mesh() == m
+        if self._X.function_space().mesh() is not self._dt.function_space().mesh():
+            raise IncompatibleMeshError(
+                "X and dt must be defined on the same particle VertexOnlyMesh."
+            )
 
-        # velocity field could be an defined on the VOM OR on parent mesh
-        if v.function_space().mesh() != m:
-            v = assemble(interpolate(v, m.coordinates.function_space()))
-        
-        # Forward Euler update expression (in ref. space)
-        # NOTE: invJ is constant, evaluated at the particle's initial position in a single time step [t, t+dt]
-        self.update_expr = X + invJ * v * dt
-
-        self.interp_expr = None
-        self.interpolator = None
-        self.callable = None
-
+        self._setup_fields(**kwargs)
+        self._update_expr = self._build_update_expr()
         self._build_callable()
+
+    @abstractmethod
+    def _setup_fields(self, **kwargs):
+        """Store stepper-specific fields."""
+        pass
+        
+    @abstractmethod
+    def _build_update_expr(self):
+        """Return the UFL update expression."""
+        pass
+
+    # NOTE: private attributes + property methods enforce the read-only contract on fields.
+    # Re-assigning the fields with a new Function object (e.g., stepper.X = ...) would silently invalidate the update expr and associated cached parloops.
+    # If we want to allow users to swap out the fields then this should be done via an explicit setter method:
+    
+    # @dt.setter
+    # def dt(self, val):
+    #     self._dt = val
+    #     self.update_expr = self._build_update_expr()
+    #     self.invalidate()
 
     @property
     def X(self):
         return self._X
+
+    @property
+    def dt(self):
+        return self._dt
+
+    def _build_callable(self):
+        """Build and cache the interpolation callables."""
+        self.interpolation_expr = interpolate(self._update_expr, self._X.function_space()) # symbolic interpolation expr
+        self.interpolator = get_interpolator(self.interpolation_expr) # numerical interpolator
+        self.callable = self.interpolator._get_callable() # parloops
+        self._callable_is_current = True
+    
+    def _check_callable_is_current(self):
+        """Trigger a rebuild of the interpolation callables."""
+        if not self._callable_is_current:
+            self._build_callable()
+    
+    def invalidate(self):
+        """Mark the callables as stale."""
+        self._callable_is_current = False
+    
+    def step(self):
+        self._check_callable_is_current()
+        result = self.callable() # execute cached parloops
+        return result
+
+
+class ForwardEulerTimeStepper(ParticleTimeStepper):
+    """
+    Advance particles by Forward Euler:
+
+    X(t + dt) = X(t) + J^-1 * v * dt
+
+    where J is the Jacobian of the geometric map from reference space to physical space F: X -> x
+    used to pullback the velocity field to reference space.
+    """
+    def _setup_fields(self, invJ, v):
+        self._invJ = invJ
+        self._v = v
+    
+    def _build_update_expr(self):
+        return self._X + self._invJ * self._v * self._dt
     
     @property
     def invJ(self):
@@ -50,84 +93,3 @@ class ForwardEulerTimeStepper:
     @property
     def v(self):
         return self._v
-    
-    @property
-    def dt(self):
-        return self._dt
-
-    @property
-    def update_expr(self):
-        return self._update_expr
-
-    @X.setter
-    def X(self, value):
-        self._X = value
-        self._rebuild_update_expr()
-
-    @invJ.setter
-    def invJ(self, value):
-        self._invJ = value
-        self._rebuild_update_expr()
-
-    @v.setter
-    def v(self, value):
-        self._v = value
-        self._rebuild_update_expr()
-
-    @dt.setter
-    def dt(self, value):
-        self._dt = value
-        self._rebuild_update_expr()
-
-    def _rebuild_update_expr(self):
-        self.update_expr = self._X + self._invJ * self._v * self._dt
-        
-    @update_expr.setter
-    def update_expr(self, value):
-        self._update_expr = value
-        self.invalidate()
-    
-    def invalidate(self):
-        self._callable_is_current = False
-
-    def _build_callable(self):
-        self.interp_expr = interpolate(self.update_expr, self.X.function_space()) # symbolic interpolation expr
-        self.interpolator = get_interpolator(self.interp_expr) # numerical interpolator
-        self.callable = self.interpolator._get_callable() # parloops
-        self._callable_is_current = True
-
-    def _check_callable_is_current(self):
-        if not self._callable_is_current:
-            self._build_callable()
-
-    def step(self):
-        # global STEP_COUNT
-        # STEP_COUNT += 1
-        self._check_callable_is_current()
-
-        # Execute cached ParLoops
-        result = self.callable()
-        return result
-
-# NOTE 1:
-# With the above persistent time stepper, we eliminate the overhead from symbolically reconstructing the interpolation expression
-# and associated expensive TSFC re-compilation and ParLoop re-construction.
-# This however does not reduce the number of runtime cache lookups that PyOP2 performs when exeucting the ParLoops.
-
-# Updating the particles positions amounts to:
-# 1. Defining the time stepper once
-#   Per outer time loop or once per integration?
-#   The VOM gets resized between successive time steps which causes the Function Spaces and Functions
-#   to get automatically rebuilt. Since the underlying objects remain the same, this amounts to merely resizing the Dats
-#   so we can most likely define the stepper outside the time loop.
-# 2. Mutating the Dats of the Functions forming the update expression
-# 3. Calling stepper.step()
-    
-
-# NOTE 2:
-# In `_build_interpolation_callables()` called by `Interpolator._get_callable()`
-# the line `parloop = op2.ParLoop(*parloop_args)` creates a ParLoop object without binding the backend kernel yet;
-# this happens later when the ParLoop is executed.
-# Executing a ParLoop (when calling the callable) triggers:
-# ParLoop.__call__() -> ParLoop._compute() -> GlobalKernel.compile_global_kernel() at which point the kernel is looked up.
-# PyOP2 essentially defers kernel binding until execution because that depends on the iteration partition (core/owned/halo), communicator state etc.

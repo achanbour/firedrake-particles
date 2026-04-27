@@ -1,5 +1,9 @@
 from firedrake import *
 import numpy as np
+
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
 from particle_traj_loop import solve_particle_traj_in_ref_space
 
 """

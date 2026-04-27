@@ -2,27 +2,10 @@ from firedrake import *
 from ufl.differentiation import ReferenceGrad
 import numpy as np
 import warnings
-from update_vom import VertexOnlyMeshUpdater, EmptyVOMError
+from update_vom import VertexOnlyMeshUpdater
 from particle_time_stepper import ForwardEulerTimeStepper
 from particle_logger import ParticleLogger
-# from plot_vom import plot_particles_snapshot
-
-class ParticleCrossingLoopNotConverged(RuntimeError):
-    """Raised when cell crossings within a single time step are not resolved within 
-    the maximum number of iterations."""
-    pass
-
-class ParticleTrajectorySolver():
-    def __init__(self, stepper, cell_crossing_solver):
-        # extract pmesh from the stepper
-        # velocity could be a function of time so may need to pass time params
-        self.stepper = stepper # dt
-        self.cell_crossing_solver = cell_crossing_solver
-    
-    def solve(self, t_start, t_end):
-        pass
-
-# TODO: define abstract classes for stepper and cell crossing solver
+from exceptions import ParticleCrossingLoopNotConverged, BisectionNotConvergedError
 
 def solve_particle_traj_in_ref_space(
         pmesh, mesh, v_fn, dt, T, t=0.0, 
@@ -54,9 +37,9 @@ def solve_particle_traj_in_ref_space(
 
     stepper = ForwardEulerTimeStepper(
         pmesh.reference_coordinates,
-        invJ_vom,
-        v_fn,
-        dt_trial_fn
+        dt_trial_fn,
+        invJ=invJ_vom,
+        v=v_fn,
     )
     
     # Track boundary particles
@@ -345,9 +328,6 @@ def solve_particle_traj_in_ref_space(
 
     return t, removed_particles
 
-class BisectionNotConvergedError(RuntimeError):
-    """Raised when the bisection algorithm has not converged within the maximum number of allowed iterations"""
-    pass
 
 BISECTION_COUNT = 0
 def bisect_crossing_time(
@@ -411,11 +391,3 @@ def bisect_crossing_time(
     bary_cross = ref_cell.compute_barycentric_coordinates(X_cross)
 
     return t_cross, bary_cross, X_cross
-
-# TODO:
-# - End of particle loop: halo exchange + update all fields eagerly
-
-# NOTE:
-# - To generate an animation of moving particles, either 
-#   save the updated plot at each time step then stich all plots together into a movie using ffmpeg OR 
-#   OR use matplotlib's FuncAnimation like in Burger's equation notebook.
