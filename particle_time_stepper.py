@@ -4,8 +4,8 @@ from exceptions import IncompatibleMeshError
 
 class ParticleTimeStepper(ABC):
     """
-    Abstract base class for time steppers that advance particle positions
-    using update expressions defined in reference space.
+    Abstract base class for time steppers that numerically integrate an ODE
+    describing a particle trajectory.
     """
     def __init__(self, X, dt, **kwargs):
         self._X = X

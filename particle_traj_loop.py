@@ -166,7 +166,7 @@ def solve_particle_traj_in_ref_space(
                 # From the barycentric coords. at the crossing point, determine which edge the particle crossed
                 # NOTE: by default, `np.argmin` picks deterministically the edge of the first bary coord that's zero
                 # That's fine when bisection finds a crossing point at a vertex but may cause problems if that's the point
-                # the particle started on (the particle essentially gets stuck being sent back and forth between the two vertices).
+                # the particle started on (the particle gets stuck being sent back and forth between the two cells).
                 
                 local_crossed_edge_ids = np.full(len(active_indices), None, dtype=object)
 

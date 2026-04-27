@@ -23,7 +23,6 @@ class BisectionSolverParams:
     max_iters: int
 
 
-
 BISECTION_COUNT = 0
 class BisectionSolver(CellCrossingSolver):
     def __init__(self, params: BisectionSolverParams):
