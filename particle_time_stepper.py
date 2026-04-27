@@ -4,7 +4,7 @@ from exceptions import IncompatibleMeshError
 
 class ParticleTimeStepper(ABC):
     """
-    Abstract base class for particle time steppers that advance particle positions
+    Abstract base class for time steppers that advance particle positions
     using update expressions defined in reference space.
     """
     def __init__(self, X, dt, **kwargs):
@@ -70,7 +70,7 @@ class ParticleTimeStepper(ABC):
         return result
 
 
-class ForwardEulerTimeStepper(ParticleTimeStepper):
+class ForwardEulerStepper(ParticleTimeStepper):
     """
     Advance particles by Forward Euler:
 

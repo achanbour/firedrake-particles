@@ -3,9 +3,9 @@ from ufl.differentiation import ReferenceGrad
 import numpy as np
 import warnings
 from update_vom import VertexOnlyMeshUpdater
-from particle_time_stepper import ForwardEulerTimeStepper
+from particle_time_stepper import ForwardEulerStepper
 from particle_logger import ParticleLogger
-from exceptions import ParticleCrossingLoopNotConverged, BisectionNotConvergedError
+from exceptions import ParticleCrossingLoopNotConverged
 
 def solve_particle_traj_in_ref_space(
         pmesh, mesh, v_fn, dt, T, t=0.0, 
@@ -35,7 +35,7 @@ def solve_particle_traj_in_ref_space(
     FS_vom = FunctionSpace(pmesh, "DG", 0) # Scalar FS for per-particle time steps
     dt_trial_fn = Function(FS_vom)
 
-    stepper = ForwardEulerTimeStepper(
+    stepper = ForwardEulerStepper(
         pmesh.reference_coordinates,
         dt_trial_fn,
         invJ=invJ_vom,
