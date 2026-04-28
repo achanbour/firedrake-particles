@@ -47,7 +47,7 @@ particle_traj_solver_params = ParticleTrajectorySolverParams(
     abs_time_tol=1e-9,
     rel_time_tol=0,
     max_iters=50,
-    plot=True
+    plot=False
 )
 
 stepper = ForwardEulerStepper(particle_vom, dt, v=v)

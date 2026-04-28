@@ -92,7 +92,6 @@ class ParticleTrajectorySolver():
                 # TODO: if we preserve the VOM topology, then we can preserve Functions and Function Spaces defined on it 
                 # so this won't be needed.
                 # For now, rebuild all fields stored in the stepper.
-                self.stepper.rebuild_fields()
                 self.stepper.invalidate()
 
                 # Update particle_ids so that it is always in sync with the latest particle set
@@ -200,10 +199,10 @@ class ParticleTrajectorySolver():
                     crossed_edge = int(np.argmin(abs(bary_cross[i])))
                     crossed_edge_normal = self.ref_cell.compute_reference_normal(1, crossed_edge)
                     
-                    v_ref = self.stepper.v_ref[particles_failed_global_idxs[i]]
+                    v_ref = self.stepper.v_ref.dat.data_ro[particles_failed_global_idxs[i]]
 
                     if np.dot(crossed_edge_normal, v_ref) <= 0:
-                        for other_edge in range(self.ref_cell.get_topology()[1]):
+                        for other_edge in range(len(bary_cross[i])):
                             if other_edge == crossed_edge:
                                 continue
                             other_edge_normal = self.ref_cell.compute_reference_normal(1, other_edge)
