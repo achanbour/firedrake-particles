@@ -47,8 +47,5 @@ class ParticlePlotter(Protocol):
         plt.close(self._fig)
 
 
-
-    
-
-
-
+# An alternative plotting method makes use of matplotlib's FuncAnimation
+# see https://github.com/firedrakeproject/firedrake/blob/release/docs/notebooks/04-burgers.ipynb
