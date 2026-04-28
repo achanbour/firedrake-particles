@@ -41,7 +41,7 @@ class BisectionSolver(CellCrossingSolver):
             
             # Advance particles by the midpoint of their current bisection bracket
             stepper.dt_fn.dat.zero()
-            stepper.dt_fn.data_wo[crossing_particle_idxs] = t_mid
+            stepper.dt_fn.dat.data_wo[crossing_particle_idxs] = t_mid
             
             particle_pos_mid = stepper.step()
             X_mid = particle_pos_mid.dat.data[crossing_particle_idxs]
@@ -68,7 +68,7 @@ class BisectionSolver(CellCrossingSolver):
 
         # Compute the position of each particle at the crossing point
         stepper.dt_fn.dat.zero()
-        stepper.dt_fn.data_wo[crossing_particle_idxs] = t_cross
+        stepper.dt_fn.dat.data_wo[crossing_particle_idxs] = t_cross
         particle_pos_cross = stepper.step()
         X_cross = particle_pos_cross.dat.data_ro[crossing_particle_idxs]
         bary_cross = ref_cell.compute_barycentric_coordinates(X_cross)

@@ -29,7 +29,7 @@ class ParticleTrajectorySolver():
         # If dt changes across time steps, then consider moving this to solve.
         self.eff_time_tol = max(self._params.abs_time_tol, self._params.rel_time_tol * self.stepper.dt)
 
-        self.particle_vom = self.stepper.X.mesh()
+        self.particle_vom = self.stepper.X.function_space().mesh()
         self.parent_mesh = self.particle_vom._parent_mesh
         
         self.ref_cell = self.parent_mesh.coordinates.function_space().finat_element.cell
@@ -50,6 +50,7 @@ class ParticleTrajectorySolver():
         return self.particle_vom.num_vertices()
 
     def solve(self, t_start, t_end):
+        particle_ids = np.arange(self.particle_vom.num_vertices())
         boundary_particles = []
         outer_loop_iter = 0
         
@@ -88,14 +89,14 @@ class ParticleTrajectorySolver():
                 self.particle_vom_updater.rebuild_vom(absorbed_vom_indices=boundary_particles_current, new_coords=new_phys_coords)
 
                 # Invalidate parloops as Function Spaces have been invalidated
-                # TODO: if we preserve the VOM topolgoy, then we can preserve Functions and Function Spaces defined on it 
+                # TODO: if we preserve the VOM topology, then we can preserve Functions and Function Spaces defined on it 
                 # so this won't be needed.
                 # For now, rebuild all fields stored in the stepper.
                 self.stepper.rebuild_fields()
                 self.stepper.invalidate()
 
                 # Update particle_ids so that it is always in sync with the latest particle set
-                survived = np.ones(self.num_particles, dtype=bool)
+                survived = np.ones(len(particle_ids), dtype=bool)
                 survived[boundary_particles_current] = False
                 particle_ids = particle_ids[survived]
             else:
@@ -121,12 +122,12 @@ class ParticleTrajectorySolver():
         new_ref_pos = self.particle_vom.reference_coordinates.dat.data_ro.copy()
         boundary_particles_current = []
 
-        while inner_loop_iter < self._params.max_iters:
+        while self.inner_loop_iter < self._params.max_iters:
             particles_have_dt_remaining = dt_remaining > self.eff_time_tol
             if not any(particles_have_dt_remaining):
                 break
 
-            inner_loop_iter += 1
+            self.inner_loop_iter += 1
             particles_with_dt_remaining_idxs = np.where(particles_have_dt_remaining)[0]
             self.particles_inner_loop_iter[particles_with_dt_remaining_idxs] += 1
 
@@ -135,12 +136,12 @@ class ParticleTrajectorySolver():
 
             # Compute candidate reference positions by executing a full step
             candidate_ref_pos = self.stepper.step()
-            candidate_bary_coords = self.ref_cell.compute_barycentric_coordinates(candidate_ref_pos)
+            candidate_bary_coords = self.ref_cell.compute_barycentric_coordinates(candidate_ref_pos.dat.data_ro)
             
             # Split particles into two subsets (crossed/not_crossed) depending on whether they have left their containing cell
             # Local set indexes into the set particles_with_remaining_dt
             # Global set indexes into the full set of particles
-            passed_mask = np.all(candidate_bary_coords[particles_with_dt_remaining_idxs] >= self._params.bary_tol, axis=1)
+            passed_mask = np.all(candidate_bary_coords[particles_with_dt_remaining_idxs] >= -self._params.bary_tol, axis=1)
             
             particles_passed_local_idxs = np.where(passed_mask)[0]
             particles_failed_local_idxs = np.where(~passed_mask)[0]
@@ -148,7 +149,7 @@ class ParticleTrajectorySolver():
             particles_passed_global_idxs = particles_with_dt_remaining_idxs[particles_passed_local_idxs]
             particles_failed_global_idxs = particles_with_dt_remaining_idxs[particles_failed_local_idxs]
             
-            self.logger(inner_loop_iter, particles_with_dt_remaining_idxs, particles_passed_global_idxs, particles_failed_global_idxs)
+            self.logger.inner_loop(self.inner_loop_iter, particles_with_dt_remaining_idxs, particles_passed_global_idxs, particles_failed_global_idxs)
 
             # Process passed particles
             if len(particles_passed_global_idxs) > 0:
@@ -199,7 +200,7 @@ class ParticleTrajectorySolver():
                     crossed_edge = int(np.argmin(abs(bary_cross[i])))
                     crossed_edge_normal = self.ref_cell.compute_reference_normal(1, crossed_edge)
                     
-                    v_ref = self.stepper.v_ref.dat.data_ro[particles_failed_global_idxs[i]]
+                    v_ref = self.stepper.v_ref[particles_failed_global_idxs[i]]
 
                     if np.dot(crossed_edge_normal, v_ref) <= 0:
                         for other_edge in range(self.ref_cell.get_topology()[1]):

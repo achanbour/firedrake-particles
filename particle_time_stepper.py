@@ -1,10 +1,14 @@
 from abc import ABC, abstractmethod
+import numpy
+
 from firedrake.interpolation import interpolate, get_interpolator
 from firedrake.mesh import VertexOnlyMeshTopology
 from firedrake.function import Function
-from firedrake.functionspace import FunctionSpace
+from firedrake.functionspace import FunctionSpace, VectorFunctionSpace, TensorFunctionSpace
+
 from ufl.differentiation import ReferenceGrad
 from ufl.geometry import SpatialCoordinate
+from ufl.operators import inv
 
 class ParticleTimeStepper(ABC):
     """
@@ -15,10 +19,12 @@ class ParticleTimeStepper(ABC):
         if not isinstance(particle_vom.topology, VertexOnlyMeshTopology):
             raise TypeError("Expected particles to be represented as a VertexOnlyMesh.")
         
+        self.particle_vom = particle_vom
+
         self._X = self.particle_vom.reference_coordinates
 
-        if not isinstance(dt, int):
-            raise TypeError("Expected the time step parameter dt to be an integer.")
+        if not isinstance(dt, float):
+            raise TypeError("Expected the time step parameter dt to be a float.")
         
         self._dt = dt
         FS = FunctionSpace(particle_vom, "DG", 0)
@@ -27,7 +33,7 @@ class ParticleTimeStepper(ABC):
         self._fields = [self._dt_fn]
         self._setup_fields(**kwargs)
         self._update_expr = self._build_update_expr()
-        self._build_callable()
+        self._build_step_callable()
 
     @abstractmethod
     def _setup_fields(self, **kwargs):
@@ -39,7 +45,6 @@ class ParticleTimeStepper(ABC):
         """Return the UFL update expression."""
         pass
 
-    @abstractmethod
     def rebuild_fields(self):
         """Rebuild all fields eagerly after a change to the VOM's topology"""
         for f in self._fields:
@@ -86,11 +91,16 @@ class ParticleTimeStepper(ABC):
         if not self._callable_is_current:
             self._build_step_callable()
     
+    def _reevaluate_fields(self):
+        """Re-evaluate all fields needed by step."""
+        pass
+    
     def invalidate(self):
-        """Mark the callables as stale."""
+        """Mark all callables as stale."""
         self._callable_is_current = False
     
     def step(self):
+        self._reevaluate_fields()
         self._check_callable_is_current()
         result = self.callable() # execute cached parloops
         return result
@@ -111,21 +121,30 @@ class ForwardEulerStepper(ParticleTimeStepper):
         self._invJ = inv(ReferenceGrad(x))
         self._v = v
         self._fields.append(self._v)
-        self._build_v_ref_callable()
+
+        TFS = TensorFunctionSpace(self.particle_vom, "DG", 0)
+        self._invJ_fn = Function(TFS)
+        self._fields.append(self._invJ_fn)
+
+        # Additional fields owned by the stepper
+        # VFS = VectorFunctionSpace(self.particle_vom, "DG", 0)
+        # self._v_ref = Function(VFS)
+        # self._v_ref_interpolator = None
 
     def invalidate(self):
         super().invalidate()
-        self._build_v_ref_callable()
+        # self._build_v_ref_callable()
 
-    def _build_v_ref_callable(self):
-        VFS = VectorFunctionSpace(self.particle_vom, "DG", 0)
-        self._v_ref = Function(VFS)
-        self._v_ref_interpolator = get_interpolator(
-            interpolate(self._invJ * self._v, VFS)
-        )
+    # def _build_v_ref_callable(self):
+    #     self._v_ref_interpolator = get_interpolator(
+    #         interpolate(self._invJ_fn * self._v, self._v_ref.function_space())
+    #     )
     
     def _build_update_expr(self):
-        return self._X + self._invJ * self._v * self._dt_fn
+        return self._X + self._invJ_fn * self._v * self._dt_fn
+    
+    def _reevaluate_fields(self):
+        self._invJ_fn.interpolate(self._invJ)
     
     @property
     def invJ(self):
@@ -135,8 +154,15 @@ class ForwardEulerStepper(ParticleTimeStepper):
     def v(self):
         return self._v
     
+    # @property
+    # def v_ref(self):
+    #     if self._v_ref_interpolator is None:
+    #         self._build_v_ref_callable()
+    #     self._v_ref = self._v_ref_interpolator._get_callable()() # execute cached parloops
+    #     return self._v_ref
+
     @property
     def v_ref(self):
-        self._v_ref = self._v_ref_interpolator._get_callable()() # execute cached parloops
-        return self._v_ref
-
+        # invJ_fn and v are both Functions defined on the particle VOM
+        # and by the time v_ref is accessed, both will have been re-evaluated
+        return numpy.einsum('ijk,ik->ij', self._invJ_fn.dat.data_ro, self._v.dat.data_ro)

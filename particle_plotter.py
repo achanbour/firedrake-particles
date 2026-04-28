@@ -1,5 +1,5 @@
 from typing import Protocol
-
+import os
 import matplotlib.pyplot as plt
 from firedrake.pyplot import triplot, scatter
 
@@ -19,9 +19,12 @@ class ParticlePlotterProtocol(Protocol):
 class ParticlePlotter(Protocol):
     """A concrete class implementing the ParticlePlotterProtocol, providing default matplotlib-based plotting"""
 
-    def __init__(self, x_lim=(0,1), y_lim=(0, 1), output_dir="output", dpi=150):         
+    def __init__(self, x_lim=(0,1), y_lim=(0, 1), output_dir=None, dpi=150):
         self.x_lim = x_lim
         self.y_lim = y_lim
+        if output_dir is None:
+            output_dir = "./output"
+            os.makedirs(output_dir, exist_ok=True)
         self.output_dir = output_dir
         self.dpi = dpi
 
