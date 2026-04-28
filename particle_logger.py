@@ -13,7 +13,12 @@ class ParticleLogger:
     }
     
     def __init__(self, level="info", float_fmt=".4f"):
-        self.level = self.LEVELS[level] # verbosity level
+        self.level = self.LEVELS.get(level, None) # verbosity level
+        if self.level is None:
+            valid = ", ".join(self.LEVELS.keys())
+            raise ValueError(
+                f"Unrecognised log level '{level}': must be one of {valid}."
+            )
         self.float_fmt = float_fmt # precision for displaying floats
 
     # Print

@@ -1,0 +1,54 @@
+from typing import Protocol
+
+import matplotlib.pyplot as plt
+from firedrake.pyplot import triplot, scatter
+
+class ParticlePlotterProtocol(Protocol):
+    def setup(self, particle_vom, parent_mesh):
+        """Creates the figure and plots the particles embedded in their parent mesh."""
+        pass
+
+    def update(self, particle_vom):
+        """Updates the particles' plot"""
+        pass
+    
+    def close(self):
+        """Closes the figure on which the plots are drawn."""
+        pass
+
+class ParticlePlotter(Protocol):
+    """A concrete class implementing the ParticlePlotterProtocol, providing default matplotlib-based plotting"""
+
+    def __init__(self, x_lim=(0,1), y_lim=(0, 1), output_dir="output", dpi=150):         
+        self.x_lim = x_lim
+        self.y_lim = y_lim
+        self.output_dir = output_dir
+        self.dpi = dpi
+
+    def setup(self, particle_vom, parent_mesh):
+        self._fig, axes = plt.subplots()
+        triplot(parent_mesh, axes=axes)
+        self._sc = scatter(particle_vom, axes=axes)
+        # Fix axess limits and aspect
+        axes.set_xlim(self.x_lim)
+        axes.set_ylim(self.y_lim)
+        axes.set_aspect("equal")
+        # Initialise the frame
+        self._frame = 0
+    
+    def update(self, particle_vom):
+        if self._sc is None:
+            raise RuntimeError("")
+        self._sc.set_offsets(particle_vom.coordinates.dat.data_ro)
+        plt.savefig(f"{self.output_dir}/frame_{self._frame:04d}.png", dpi=self.dpi)
+        self._frame += 1
+    
+    def close(self):
+        plt.close(self._fig)
+
+
+
+    
+
+
+

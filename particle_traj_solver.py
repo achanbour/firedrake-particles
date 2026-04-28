@@ -1,11 +1,12 @@
 import numpy as np
 from firedrake import *
 import warnings
-
 from dataclasses import dataclass
-from update_vom import VertexOnlyMeshUpdater
 
+from update_vom import VertexOnlyMeshUpdater
+from particle_logger import ParticleLogger
 from exceptions import ParticleCrossingLoopNotConverged
+from particle_plotter import ParticlePlotterProtocol, ParticlePlotter
 
 @dataclass
 class ParticleTrajectorySolverParams:
@@ -13,40 +14,69 @@ class ParticleTrajectorySolverParams:
     abs_time_tol: float
     rel_time_tol: float
     max_iters: int
+    log_level: str="info"
+    plot: bool=False
 
 class ParticleTrajectorySolver():
-    def __init__(self, stepper, cell_crossing_solver, params: ParticleTrajectorySolverParams):
+    def __init__(self, stepper, cell_crossing_solver, params: ParticleTrajectorySolverParams, plotter: ParticlePlotterProtocol = None):
         # velocity could be a function of time so may need to pass time params
 
         self.stepper = stepper
         self.cell_crossing_solver = cell_crossing_solver
         
         self._params = params
-        self.eff_time_tol = max(self._params.abs_time_tol, self._params.rel_time_tol * dt)
+
+        # If dt changes across time steps, then consider moving this to solve.
+        self.eff_time_tol = max(self._params.abs_time_tol, self._params.rel_time_tol * self.stepper.dt)
 
         self.particle_vom = self.stepper.X.mesh()
-        self.num_particles = self.particle_vom.num_vertices()
         self.parent_mesh = self.particle_vom._parent_mesh
         
         self.ref_cell = self.parent_mesh.coordinates.function_space().finat_element.cell
 
         self.particle_vom_updater = VertexOnlyMeshUpdater(self.particle_vom, self.parent_mesh)
-        
+
+        self.logger = ParticleLogger(level=self._params.log_level)
+
+        if plotter is not None:
+            self.plotter = plotter
+        elif params.plot:
+            self.plotter = ParticlePlotter()
+        else:
+            self.plotter = None
+
+    @property
+    def num_particles(self):
+        return self.particle_vom.num_vertices()
 
     def solve(self, t_start, t_end):
-        particle_ids = np.arange(self.num_particles)
         boundary_particles = []
+        outer_loop_iter = 0
+        
+        if self.plotter:
+            self.plotter.setup(self.particle_vom, self.parent_mesh)
 
         while t_start < t_end - 1e-12:
+            outer_loop_iter += 1
+            self.logger.outer_loop(outer_loop_iter, t_start, self.stepper.dt, t_end, self.num_particles)
+
             # Run the inner time step loop
-            # TODO: extract initial dt from stepper (not time_remaining)
-            boundary_particles_current = self._run_inner_loop(dt)
+            boundary_particles_current = self._run_inner_loop()
 
             # Recompute physical coordinates
             new_phys_coords = assemble(
                 interpolate(
                     SpatialCoordinate(self.parent_mesh), self.particle_vom.coordinates.function_space()
                 )
+            )
+
+            self.logger.outer_summary(
+                outer_loop_iter,
+                self.inner_loop_iter,
+                self.particles_inner_loop_iter,
+                boundary_particles_current,
+                self.particle_vom.reference_coordinates.dat.data_ro,
+                new_phys_coords.dat.data_ro
             )
 
             # Handle boundary particles and update the particle VOM
@@ -57,46 +87,51 @@ class ParticleTrajectorySolver():
                 
                 self.particle_vom_updater.rebuild_vom(absorbed_vom_indices=boundary_particles_current, new_coords=new_phys_coords)
 
+                # Invalidate parloops as Function Spaces have been invalidated
+                # TODO: if we preserve the VOM topolgoy, then we can preserve Functions and Function Spaces defined on it 
+                # so this won't be needed.
+                # For now, rebuild all fields stored in the stepper.
+                self.stepper.rebuild_fields()
                 self.stepper.invalidate()
-                # TODO: rebuild all fields
 
                 # Update particle_ids so that it is always in sync with the latest particle set
                 survived = np.ones(self.num_particles, dtype=bool)
                 survived[boundary_particles_current] = False
                 particle_ids = particle_ids[survived]
-
             else:
                 # Update the VOM's coordinates (topology stays the same)
                 self.particle_vom.coordinates.dat.data_wo[:] = new_phys_coords.dat.data_ro
 
-            t_start += dt
+            t_start += self.stepper.dt
+
+            if self.plotter:
+                self.plotter.update(self.particle_vom)
+        
+        if self.plotter:
+            self.plotter.close()
             
-            return t_start, boundary_particles
+        return t_start, boundary_particles
 
         
     def _run_inner_loop(self):
-        dt_remaining = np.full(self.num_particles, dt)
-        new_ref_pos = self.particle_vom.reference_coordinates.data_ro.copy()
+        self.inner_loop_iter = 0
+        self.particles_inner_loop_iter = np.zeros(self.num_particles, dtype=int)
 
-        inner_loop_iter = 0
-        particles_with_dt_remaining_iters = np.zeros(self.num_particles, dtype=int)
-
+        dt_remaining = np.full(self.num_particles, self.stepper.dt)
+        new_ref_pos = self.particle_vom.reference_coordinates.dat.data_ro.copy()
         boundary_particles_current = []
 
         while inner_loop_iter < self._params.max_iters:
-            particles_with_dt_remaining = particles_with_dt_remaining > self.eff_time_tol
-            if not any(particles_with_dt_remaining):
+            particles_have_dt_remaining = dt_remaining > self.eff_time_tol
+            if not any(particles_have_dt_remaining):
                 break
 
             inner_loop_iter += 1
-            particles_with_dt_remaining_idxs = np.where(particles_with_dt_remaining)[0]
-            particles_with_dt_remaining_iters[particles_with_dt_remaining_idxs] += 1
+            particles_with_dt_remaining_idxs = np.where(particles_have_dt_remaining)[0]
+            self.particles_inner_loop_iter[particles_with_dt_remaining_idxs] += 1
 
-            self.stepper.dt.dat.zero()
-            self.stepper.dt.data_wo[particles_with_dt_remaining_idxs] = dt_remaining[particles_with_dt_remaining_idxs]
-            
-            # TODO: Re-evaluate all fields on the current particle VOM
-            self.stepper.refresh_fields()
+            self.stepper.dt_fn.dat.zero()
+            self.stepper.dt_fn.dat.data_wo[particles_with_dt_remaining_idxs] = dt_remaining[particles_with_dt_remaining_idxs]
 
             # Compute candidate reference positions by executing a full step
             candidate_ref_pos = self.stepper.step()
@@ -113,6 +148,8 @@ class ParticleTrajectorySolver():
             particles_passed_global_idxs = particles_with_dt_remaining_idxs[particles_passed_local_idxs]
             particles_failed_global_idxs = particles_with_dt_remaining_idxs[particles_failed_local_idxs]
             
+            self.logger(inner_loop_iter, particles_with_dt_remaining_idxs, particles_passed_global_idxs, particles_failed_global_idxs)
+
             # Process passed particles
             if len(particles_passed_global_idxs) > 0:
                 # Set dt_remaining to 0
@@ -120,21 +157,39 @@ class ParticleTrajectorySolver():
 
                 # Register coordinates
                 new_ref_pos[particles_passed_global_idxs] = candidate_ref_pos.dat.data_ro[particles_passed_global_idxs]
+
+                self.logger.print_particles("Passed particles",
+                                            {
+                                                "X_new": new_ref_pos[particles_passed_global_idxs]
+                                            },
+                                            indices=particles_passed_global_idxs, level="info")
             
-            parent_cells = self.particle_vom.cell_parent_cell_list.copy()
+            parent_cells = self.particle_vom.topology.cell_parent_cell_list.copy()
             new_parent_cells = parent_cells.copy()
         
             # Process failed particles
             if len(particles_failed_global_idxs) > 0:
                 # Use the cell crossing solver to solve for crossing time and crossing position of each failed particle
-                t_cross, X_cross, bary_cross = self.cell_crossing_solver(
+                t_cross, X_cross, bary_cross = self.cell_crossing_solver.solve(
                     self.stepper,
                     self.ref_cell,
                     particles_failed_global_idxs,
+                    dt_remaining[particles_failed_global_idxs],
                     bary_tol=self._params.bary_tol,
                     time_tol=self.eff_time_tol,
-                    # max_iters = max_iters -- set by user when instantiating the solver?
                 )
+
+                # Decrement dt_remaining by t_cross
+                dt_remaining[particles_failed_global_idxs] -= t_cross
+
+                self.logger.print_particles("Failed particles",
+                                            {
+                                                "dt_remaining": dt_remaining[particles_failed_global_idxs],
+                                                "t_cross": t_cross,
+                                                "bary_coords_cross": bary_cross,
+                                                "X_cross": X_cross 
+                                            }, 
+                                            indices=particles_failed_global_idxs)
 
                 # Determine which edge each particle crossed
                 crossed_edge_idxs = np.full(len(particles_with_dt_remaining_idxs), None, dtype=object)
@@ -144,13 +199,12 @@ class ParticleTrajectorySolver():
                     crossed_edge = int(np.argmin(abs(bary_cross[i])))
                     crossed_edge_normal = self.ref_cell.compute_reference_normal(1, crossed_edge)
                     
-                    # TODO: Is velocity always defined in the stepper? Is invJ also owned by the stepper?
-                    v_ref = invJ_vom.dat.data_ro[particles_failed_global_idxs[i]] @ self.stepper.v.dat.data_ro[particles_failed_global_idxs[i]]
+                    v_ref = self.stepper.v_ref.dat.data_ro[particles_failed_global_idxs[i]]
 
                     if np.dot(crossed_edge_normal, v_ref) <= 0:
                         for other_edge in range(self.ref_cell.get_topology()[1]):
                             if other_edge == crossed_edge:
-                                pass
+                                continue
                             other_edge_normal = self.ref_cell.compute_reference_normal(1, other_edge)
                             if np.dot(other_edge_normal, v_ref) > 0:
                                 crossed_edge = other_edge
@@ -172,16 +226,30 @@ class ParticleTrajectorySolver():
                     else:
                         new_parent_cells[pid, 0] = next_cell
                     
-                    A_crossed_edge, b_crossed_edge = self.parent_mesh.topology.cell_facet_coord_transforms
-                    new_ref_pos[pid] = A_crossed_edge[parent_cell, crossed_edge] @ X_cross[i] + b_crossed_edge[parent_cell, crossed_edge]
+                    A_facet_coord_transform, b_facet_coord_transform = self.parent_mesh.topology.cell_facet_coord_transforms
+                    new_ref_pos[pid] = A_facet_coord_transform.data[parent_cell, crossed_edge] @ X_cross[i] + b_facet_coord_transform.data[parent_cell, crossed_edge]
                 
-                # Update the particle VOM
-                self.particle_vom_updater.update_ref_view(new_parent_cells, new_ref_pos)
+                self.logger.print_particles("Failed particles - Cell transitions",
+                                            {
+                                                "parent_cell": parent_cells[particles_failed_global_idxs, 0],
+                                                "crossed_edge": crossed_edge_idxs[particles_failed_local_idxs],
+                                                "new_parent_cell": new_parent_cells[particles_failed_global_idxs, 0],
+                                                "X_new": new_ref_pos[particles_failed_global_idxs]
+                                            },
+                                            indices=particles_failed_global_idxs,
+                                            level="info")
+                
+            # Update the particle VOM
+            self.particle_vom_updater.update_ref_view(new_parent_cells, new_ref_pos)
         else:
+            particles_not_resolved_idxs = np.where(dt_remaining > self.eff_time_tol)[0]
+            self.logger.print_particles("Non-resolved particles",
+                                        {
+                                            "dt_remaining": dt_remaining[particles_not_resolved_idxs]
+                                        },
+                                        indices=particles_not_resolved_idxs,
+                                        level="info")
             raise ParticleCrossingLoopNotConverged(
                     f"Cell crossings could not be resolved within {self._params.max_iters} iterations."
                 )
         return boundary_particles_current
-
-
-

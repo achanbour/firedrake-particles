@@ -18,8 +18,6 @@ class CellCrossingSolver(ABC):
 
 @dataclass
 class BisectionSolverParams:
-    bary_tol: float
-    time_tol: float
     max_iters: int
 
 
@@ -29,21 +27,21 @@ class BisectionSolver(CellCrossingSolver):
         self._params = params
 
     
-    def solve(self, stepper, ref_cell, crossing_particle_idxs, particle_remaining_dt):
+    def solve(self, stepper, ref_cell, crossing_particle_idxs, crossing_particle_dt, bary_tol, time_tol):
         global BISECTION_COUNT
         BISECTION_COUNT += 1
         num_particles = len(crossing_particle_idxs)
         
         # Initialise the bisection bracket for each particle
         t_lo = np.zeros(num_particles, dtype=float)
-        t_hi = particle_remaining_dt[crossing_particle_idxs].copy()
+        t_hi = crossing_particle_dt.copy()
         
         for _ in range(self._params.max_iters):
             t_mid = (t_lo + t_hi) / 2
             
             # Advance particles by the midpoint of their current bisection bracket
-            stepper.dt.dat.zero()
-            stepper.dt.data_wo[crossing_particle_idxs] = t_mid
+            stepper.dt_fn.dat.zero()
+            stepper.dt_fn.data_wo[crossing_particle_idxs] = t_mid
             
             particle_pos_mid = stepper.step()
             X_mid = particle_pos_mid.dat.data[crossing_particle_idxs]
@@ -52,16 +50,16 @@ class BisectionSolver(CellCrossingSolver):
             # Evaluate the boolean predicate
             # For particles inside at the midpoint: advance the lower end of the bracket
             # For particles outside at the midpoint: advance the higher end of the bracket
-            inside = np.all(bary_mid >= -self._params.bary_tol, axis=1)
+            inside = np.all(bary_mid >= -bary_tol, axis=1)
             t_lo[inside] = t_mid[inside]
             t_hi[~inside] = t_mid[~inside]
 
             # Declare convergence if all brackets have sufficiently shrunk
-            if np.max(t_hi - t_lo) < self._params.time_tol:
+            if np.max(t_hi - t_lo) < time_tol:
                 break
         else:
             raise BisectionNotConvergedError(
-                f"Bisection failed to converge within {self._params.max_iters} iterations using time_tol={self._params.time_tol}"
+                f"Bisection failed to converge within {self._params.max_iters} iterations using time_tol={time_tol}"
             )
         
         # Extract crossing times
@@ -69,8 +67,8 @@ class BisectionSolver(CellCrossingSolver):
         t_cross = t_lo
 
         # Compute the position of each particle at the crossing point
-        stepper.dt.dat.zero()
-        stepper.dt.data_wo[crossing_particle_idxs] = t_cross
+        stepper.dt_fn.dat.zero()
+        stepper.dt_fn.data_wo[crossing_particle_idxs] = t_cross
         particle_pos_cross = stepper.step()
         X_cross = particle_pos_cross.dat.data_ro[crossing_particle_idxs]
         bary_cross = ref_cell.compute_barycentric_coordinates(X_cross)
