@@ -1,6 +1,6 @@
 from firedrake import *
 import numpy as np
-from particle_traj_loop import solve_particle_traj_in_ref_space
+from particle_traj_loop_old import solve_particle_traj_in_ref_space
 
 """
 Deterministic particle trajectory test using a solid body rotation field with constant angular speed
@@ -44,7 +44,7 @@ T_final, removed_particles = solve_particle_traj_in_ref_space(vom, mesh, v, dt, 
 print("Final particle positions: ", vom.coordinates.dat.data_ro)
 print("Removed particles: ", removed_particles)
 
-from particle_traj_loop import BISECTION_COUNT
+from particle_traj_loop_old import BISECTION_COUNT
 print("Number of bisection calls to resolve cell crossings: ", BISECTION_COUNT)
 
 # NOTE: Forward Euler is not exact in this case.

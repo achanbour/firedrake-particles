@@ -1,7 +1,7 @@
 from firedrake import *
 from firedrake.petsc import PETSc
 import numpy as np
-from particle_traj_loop import solve_particle_traj_in_ref_space
+from particle_traj_loop_old import solve_particle_traj_in_ref_space
 
 """
 Deterministic particle trajectory test with random constant velocity (different across particles)
@@ -50,7 +50,7 @@ with PETSc.Log.Event("ParticleTrajectoryLoop"):
 print("Final particle positions: ", particle_vom.coordinates.dat.data_ro)
 print("Removed particles: ", removed_particles)
 
-from particle_traj_loop import BISECTION_COUNT
+from particle_traj_loop_old import BISECTION_COUNT
 print("Number of bisection calls to resolve crossings: ", BISECTION_COUNT)
 
 # from particle_time_stepper import STEP_COUNT

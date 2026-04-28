@@ -32,13 +32,9 @@ def solve_particle_traj_in_ref_space(
     TFS_vom = TensorFunctionSpace(pmesh, "DG", 0) # Tensor FS for the Jacobian inverse
     invJ_vom = Function(TFS_vom)
 
-    FS_vom = FunctionSpace(pmesh, "DG", 0) # Scalar FS for per-particle time steps
-    dt_trial_fn = Function(FS_vom)
-
     stepper = ForwardEulerStepper(
-        pmesh.reference_coordinates,
-        dt_trial_fn,
-        invJ=invJ_vom,
+        pmesh,
+        dt,
         v=v_fn,
     )
     
@@ -90,8 +86,8 @@ def solve_particle_traj_in_ref_space(
             active_indices = np.where(active)[0]
             active_iters[active_indices] += 1
 
-            stepper.dt.dat.zero()
-            stepper.dt.dat.data_wo[active_indices] = dt_left[active_indices]
+            stepper.dt_fn.dat.zero()
+            stepper.dt_fn.dat.data_wo[active_indices] = dt_left[active_indices]
             
             # Recompute invJ on the CURRENT embedding
             # This is is done here rather than in the outer loop as cell ownership changes within the inner loop
@@ -269,7 +265,7 @@ def solve_particle_traj_in_ref_space(
             # 5) Re-enter the inner loop with new ref. coords., parent cells and remaining dt_left
 
             if inner_loop_iter == max_inner_iters:
-                still_active = np.where(dt_left > time_tol)[0]
+                still_active = np.where(dt_left > effective_time_tol)[0]
                 logger.print_particles(
                     "Non-converged particles",
                     {"dt_left": dt_left[still_active]},
@@ -301,10 +297,6 @@ def solve_particle_traj_in_ref_space(
             # And ensure the stepper stores the updated fields!
             # stepper.X = pmesh.reference_coordinates
             stepper.invalidate()
-
-            stepper.invJ._match_mesh_topology_version()
-            stepper.dt._match_mesh_topology_version()
-            stepper.v._match_mesh_topology_version()
 
             # Only retain the ID of surviving particles
             keep_mask = np.ones(len(particle_ids), dtype=bool)
@@ -357,8 +349,8 @@ def bisect_crossing_time(
     for _ in range(max_iters):
         t_mid = (t_lo + t_hi) / 2
 
-        stepper.dt.dat.zero()
-        stepper.dt.dat.data_wo[failed_global] = t_mid
+        stepper.dt_fn.dat.zero()
+        stepper.dt_fn.dat.data_wo[failed_global] = t_mid
     
         # Advance only failed particles by mid time substep
         mid_ref_fn = stepper.step()
@@ -384,8 +376,8 @@ def bisect_crossing_time(
     t_cross = t_lo
 
     # Compute barycentric coordinates at the crossing point
-    stepper.dt.dat.zero()
-    stepper.dt.dat.data_wo[failed_global] = t_cross
+    stepper.dt_fn.dat.zero()
+    stepper.dt_fn.dat.data_wo[failed_global] = t_cross
     cross_ref_fn = stepper.step()
     X_cross = cross_ref_fn.dat.data_ro[failed_global]
     bary_cross = ref_cell.compute_barycentric_coordinates(X_cross)

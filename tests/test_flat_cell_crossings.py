@@ -1,5 +1,5 @@
 from firedrake import *
-import particle_traj_loop as ptl
+import particle_traj_loop_old as ptl
 import numpy as np
 
 num_cells = [2, 5, 10, 15, 20, 30]

@@ -242,6 +242,7 @@ class ParticleTrajectorySolver():
             # Update the particle VOM
             self.particle_vom_updater.update_ref_view(new_parent_cells, new_ref_pos)
         else:
+            breakpoint()
             particles_not_resolved_idxs = np.where(dt_remaining > self.eff_time_tol)[0]
             self.logger.print_particles("Non-resolved particles",
                                         {

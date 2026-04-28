@@ -2,36 +2,36 @@ from firedrake import *
 import numpy as np
 import matplotlib.pyplot as plt
 
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from particle_time_stepper import ForwardEulerStepper
+from particle_traj_solver import ParticleTrajectorySolver, ParticleTrajectorySolverParams
+import particle_crossing_solver
+
 """
-This experiment investigates the dependence of the error in the numerical solution based on bisection accuracy.
+This experiment investigates the relation between the error of the numerical solution and the accuracy of the bisection algorithm
+used to resolve cell crossings.
 
 Using constant velocity, the numerical trajectory obtained using Forward Euler is exact at each time step.
-Any error is therefore entirely attributable to bisection, used to resolve cell crossings in each step.
-Hence we want to make bisection as precise as possible so use absolute time tolerances only.
+Any error is therefore entirely attributable to bisection. We therefore want to make bisection as accurate as possible
+(use absolute time tolerances only).
 """
-# Parent mesh
-# Finer mesh implies smaller cells allowing for potentially more crossings
-# E.g., n_cells=5: h=0.2 (coarse), n_cells=10: h=0.1 (fine)
+# Parent mesh params
 n_cells = 10
 
-# Initial particle positions
+# Particle VOM params
 n_particles = 10
 x_diag = np.arange(n_particles) / 10.0 + 0.05
 x0 = np.column_stack([x_diag, x_diag])
-
-# Velocity
-# Speed controls how many crossings occur per time step
 v0 = np.array([0.45, 0.25])
 
-# Time parameters
-# dt controls how many crossings occur (large: allow more crossings, small: few crossings)
-# T controls how much crossing error gets accumulated (longer is better to accumulate signal?)
-T = 1.5
-dt = 0.1
+# Stepper params
+dt = 0.1 # controls how many crossings occur
+t_start = 0
+t_end = 1.0 # controls how much error gets accumulated
 
-# bisection_iters = [28, 30, 40, 50]
-
-bary_tol = 1e-16
+bary_tol = 1e-9
 rel_time_tol = 0
 abs_time_tols = [1e-3, 1e-4, 1e-6, 1e-8, 1e-10, 1e-12, 1e-14, 1e-16]
 
@@ -39,10 +39,11 @@ errors = []
 bisection_calls = []
 
 for abs_time_tol in abs_time_tols:
-    # Rebuild fresh mesh and particle VOM for each run
-    mesh = UnitSquareMesh(n_cells, n_cells, quadrilateral=False)
-    particle_vom = VertexOnlyMesh(mesh, x0)
+    # Rebuild a fresh mesh and a fresh particle VOM for each run
+    parent_mesh = UnitSquareMesh(n_cells, n_cells, quadrilateral=False)
+    particle_vom = VertexOnlyMesh(parent_mesh, x0)
 
+    # Set the particles velocity
     V = VectorFunctionSpace(particle_vom, "DG", 0, dim=particle_vom.geometric_dimension)
     v = Function(V, name="particle_velocity")
     V_io = VectorFunctionSpace(particle_vom.input_ordering, "DG", 0, dim=particle_vom.geometric_dimension)
@@ -50,28 +51,38 @@ for abs_time_tol in abs_time_tols:
     v_io.dat.data_wo[:] = v0
     v.interpolate(v_io)
 
-    x_analytical = particle_vom.coordinates.dat.data_ro + v.dat.data_ro * T
+    # Compute analytical solution
+    x_analytical = particle_vom.coordinates.dat.data_ro + v.dat.data_ro * t_end
     keep = np.ones(x_analytical.shape[0], dtype=bool)
+    
+    # Set up timer stepper
+    stepper = ForwardEulerStepper(particle_vom, dt, v=v)
 
-    import particle_traj_loop as ptl
-    ptl.BISECTION_COUNT = 0  # reset global counter
-
+    # Set up cell crossing solver
     # The number of bisection iterations needed to converge depends on time_tol
     # Since bisection halves the time bracket at each step, it converges once dt/2^n = time_tol
-    max_iter = int(np.ceil(np.log2(dt/max(abs_time_tol, rel_time_tol * dt))))
-    T_final, removed = ptl.solve_particle_traj_in_ref_space(
-        particle_vom, mesh, v, dt, T, t=0.0,
-        max_bisection_iters=max_iter,
-        abs_time_tol = abs_time_tol,
-        rel_time_tol = rel_time_tol,
-        bary_tol=bary_tol,
-        plot=False
-    )
-    
-    bisection_calls.append(ptl.BISECTION_COUNT)
+    max_bisection_iters = int(np.ceil(np.log2(dt/max(abs_time_tol, rel_time_tol * dt))))
+    bisection_params = particle_crossing_solver.BisectionSolverParams(max_iters=max_bisection_iters)
+    cell_crossing_solver = particle_crossing_solver.BisectionSolver(bisection_params)
 
-    if len(removed) > 0:
-        keep[removed] = False
+    particle_crossing_solver.BISECTION_COUNT = 0
+
+    # Set up the particle trajectory solver
+    particle_traj_solver_params = ParticleTrajectorySolverParams(
+    bary_tol=bary_tol,
+    abs_time_tol=abs_time_tol,
+    rel_time_tol=0,
+    max_iters=50,
+    plot=False
+    )
+
+    particle_traj_solver = ParticleTrajectorySolver(stepper, cell_crossing_solver, particle_traj_solver_params)
+    T_final, removed_particles = particle_traj_solver.solve(t_start, t_end)
+
+    bisection_calls.append(particle_crossing_solver.BISECTION_COUNT)
+
+    if len(removed_particles) > 0:
+        keep[removed_particles] = False
         x_analytical = x_analytical[keep]
         
     x_numerical = particle_vom.coordinates.dat.data_ro
@@ -85,9 +96,6 @@ for tol, calls, err in zip(abs_time_tols, bisection_calls, errors):
 
 # plt.semilogy(time_tols, errors)
 plt.loglog(abs_time_tols, errors, label="L2 Error")
-# ref = np.array(time_tols)
-# plt.loglog(ref, ref * (errors[-1]/time_tols[-1]), '--k', alpha=0.75, label="slope 1")
-# plt.legend()
 plt.xlabel("Absolute time tol")
 plt.ylabel("L2 error")
 plt.title("Bisection convergence")
