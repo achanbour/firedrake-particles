@@ -27,13 +27,13 @@ x0 = np.column_stack([x_diag, x_diag])
 v0 = np.array([0.45, 0.25])
 
 # Stepper params
-dt = 0.1 # controls how many crossings occur
 t_start = 0
-t_end = 1.0 # controls how much error gets accumulated
+t_end = 1.5 # controls how much error gets accumulated
+dt = 0.1 # controls how many crossings occur
 
-bary_tol = 1e-9
-rel_time_tol = 0
+bary_tol = 1e-16
 abs_time_tols = [1e-3, 1e-4, 1e-6, 1e-8, 1e-10, 1e-12, 1e-14, 1e-16]
+rel_time_tol = 0
 
 errors = []
 bisection_calls = []
@@ -99,7 +99,9 @@ plt.loglog(abs_time_tols, errors, label="L2 Error")
 plt.xlabel("Absolute time tol")
 plt.ylabel("L2 error")
 plt.title("Bisection convergence")
-plt.savefig("plots/bisection_error.png")
+plot_dir = "./plots"
+os.makedirs(plot_dir, exist_ok=True)
+plt.savefig(f"{plot_dir}/bisection_error.png")
 
 # NOTE:
 # - When bisection converges, the final error is of the order of at least time_tol but it also depends on bary_tol: 

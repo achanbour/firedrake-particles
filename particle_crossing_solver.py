@@ -74,3 +74,6 @@ class BisectionSolver(CellCrossingSolver):
         bary_cross = ref_cell.compute_barycentric_coordinates(X_cross)
 
         return t_cross, X_cross, bary_cross
+
+class LineIntersectionSolver(CellCrossingSolver):
+    pass

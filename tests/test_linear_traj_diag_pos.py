@@ -14,8 +14,8 @@ Linear particle trajectory using constant velocity (identical for all particles)
 # Define the parent mesh
 parent_mesh = UnitSquareMesh(10, 10, quadrilateral=False)
 
-# Define the particle VOM
-n_particles = 10
+# Define the particles VOM
+num_particles = 10
 x_diag = np.arange(n_particles) / 10.0 + 0.05
 x0 = np.column_stack([x_diag, x_diag])
 particle_vom = VertexOnlyMesh(parent_mesh, x0)
@@ -29,7 +29,7 @@ V_io = VectorFunctionSpace(particle_vom.input_ordering, "DG", 0, dim=particle_vo
 v_io = Function(V_io, name="io_particle_velocity")
 
 v0 = np.array( [0.01, 0.02])
-v_io.dat.data_wo[:] = np.tile(v0, (n_particles, 1))
+v_io.dat.data_wo[:] = np.tile(v0, (num_particles, 1))
 v.interpolate(v_io)
 v0_vom = v.dat.data_ro.copy()
 print("Initial particle velocities: ", v0_vom)

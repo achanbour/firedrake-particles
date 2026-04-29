@@ -52,14 +52,14 @@ class ParticleTrajectorySolver():
     def solve(self, t_start, t_end):
         particle_ids = np.arange(self.particle_vom.num_vertices())
         boundary_particles = []
-        outer_loop_iter = 0
+        self.outer_loop_iter = 0
         
         if self.plotter:
             self.plotter.setup(self.particle_vom, self.parent_mesh)
 
         while t_start < t_end - 1e-12:
-            outer_loop_iter += 1
-            self.logger.outer_loop(outer_loop_iter, t_start, self.stepper.dt, t_end, self.num_particles)
+            self.outer_loop_iter += 1
+            self.logger.outer_loop(self.outer_loop_iter, t_start, self.stepper.dt, t_end, self.num_particles)
 
             # Run the inner time step loop
             boundary_particles_current = self._run_inner_loop()
@@ -72,7 +72,7 @@ class ParticleTrajectorySolver():
             )
 
             self.logger.outer_summary(
-                outer_loop_iter,
+                self.outer_loop_iter,
                 self.inner_loop_iter,
                 self.particles_inner_loop_iter,
                 boundary_particles_current,

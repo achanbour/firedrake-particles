@@ -136,7 +136,7 @@ class ForwardEulerStepper(ParticleTimeStepper):
     def invalidate(self):
         super().invalidate()
         # Option 1: mark callable as stable, gets rebuilt lazily on next access
-        self._v_ref_callable_current = None
+        self._v_ref_callable_current = False
         
         # Option 2: force the callable to be rebuilt now
         # self._build_v_ref_callable()
