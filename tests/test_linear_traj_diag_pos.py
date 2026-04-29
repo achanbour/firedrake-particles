@@ -42,7 +42,7 @@ print("Initial particle velocities: ", v0_vom)
 t_start = 0
 t_end = 2.6
 dt = 0.1
-stepper = ForwardEulerStepper(particle_vom, dt, v=v)
+stepper = ForwardEulerStepper(particle_vom, dt, v)
 
 cell_crossing_solver = BisectionSolver()
 

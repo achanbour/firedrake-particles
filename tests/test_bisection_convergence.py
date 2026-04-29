@@ -56,7 +56,7 @@ for abs_time_tol in abs_time_tols:
     keep = np.ones(x_analytical.shape[0], dtype=bool)
     
     # Set up timer stepper
-    stepper = ForwardEulerStepper(particle_vom, dt, v=v)
+    stepper = ForwardEulerStepper(particle_vom, dt, v)
 
     # Set up cell crossing solver
     # The number of bisection iterations needed to converge depends on time_tol
