@@ -174,6 +174,8 @@ class ForwardEulerStepper(ParticleTimeStepper):
     
     def _reevaluate_fields(self):
         # NOTE: do we need to cache the interpolation callables too?
+        # Likely yes as this is called every time stepper.step() including the calls made in bisection
+        # which would repeatedly re-evaluate the fields!
         self._invJ_fn.interpolate(self._invJ_expr)
 
         # If v is an external field then we need to re-evaluate at the new particle locations

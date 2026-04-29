@@ -1,47 +1,72 @@
 from firedrake import *
-import particle_traj_loop_old as ptl
 import numpy as np
 
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from particle_time_stepper import ForwardEulerStepper
+import particle_crossing_solver
+from particle_traj_solver import ParticleTrajectorySolver, ParticleTrajectorySolverParams
+
+
 num_cells = [2, 5, 10, 15, 20, 30]
-# num_cells = [10]
 errors = []
 bisection_calls = []
 
 for n in num_cells:
-    mesh = UnitSquareMesh(n, n)
+    # Define the parent mesh
+    parent_mesh = UnitSquareMesh(n, n, quadrilateral=False)
+
+    # Define the particles VOM
 
     # Place a single particle close to a facet
     # For n = 2, a facet contains the point (0.625, 0.625)
     # For n = 10,  a facet contains the point (0.145, 0.145)
     # x0 = np.array([[0.140, 0.214]])
+    
+    # Place a single particle close to the bottom left corner (0, 0)
     x0 = np.array([[0.001, 0.001]])
-    particle_vom = VertexOnlyMesh(mesh, x0)
+    particle_vom = VertexOnlyMesh(parent_mesh, x0)
     x0_vom = particle_vom.coordinates.dat.data_ro.copy()
 
-    # Assign per particle velocities
-    U = VectorFunctionSpace(particle_vom, "DG", 0, dim=particle_vom.geometric_dimension)
-    u = Function(U, name="particle_velocity")
-    u.dat.data[:] = [0.15, 0.156]
+    # Define per-particle velocities
+    V = VectorFunctionSpace(particle_vom, "DG", 0, dim=particle_vom.geometric_dimension)
+    v = Function(V, name="particle_velocity")
+    v.dat.data[:] = [0.15, 0.156]
+
+    # Define solvers
 
     # Make the particle travel at most half a cell width to ensure that no more than one crossing occurs
     # regardless where the particle started from
-    dt = 0.5 * (1/n) / np.linalg.norm(u.dat.data_ro)
+    dt = 0.5 * (1/n) / np.linalg.norm(v.dat.data_ro)
+    t_start = 0
+    t_end = dt # single time step
+    stepper = ForwardEulerStepper(particle_vom, dt, v)
 
-    ptl.BISECTION_COUNT = 0 # reset global counter
+    cell_crossing_solver = particle_crossing_solver.BisectionSolver()
+    particle_crossing_solver.BISECTION_COUNT = 0
 
-    T_final, removed_particles = ptl.solve_particle_traj_in_ref_space(particle_vom, mesh, u, dt, dt, t=0.0, plot=False)
+    particle_traj_solver_params = ParticleTrajectorySolverParams(
+    bary_tol=1e-9,
+    abs_time_tol=1e-9,
+    rel_time_tol=0,
+    max_iters=50,
+    plot=False
+    )
+    particle_traj_solver = ParticleTrajectorySolver(stepper, cell_crossing_solver, particle_traj_solver_params)
+
+    T_final, removed_particles = particle_traj_solver.solve(t_start, t_end)
     
     print()
     print("Final particle position: ", particle_vom.coordinates.dat.data_ro)
 
-    x_final_expected = x0_vom + T_final * u.dat.data_ro
+    x_final_expected = x0_vom + T_final * v.dat.data_ro
 
     print("Expected final position: ", x_final_expected)
     err = np.linalg.norm(x_final_expected - particle_vom.coordinates.dat.data_ro)
     errors.append(err)
 
-    # print("Total number of bisection calls: ", BISECTION_COUNT)
-    bisection_calls.append(ptl.BISECTION_COUNT)
+    bisection_calls.append(particle_crossing_solver.BISECTION_COUNT)
 
 
 print("\nError convergence summary:")

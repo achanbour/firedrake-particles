@@ -1,22 +1,29 @@
 from firedrake import *
-import particle_traj_loop_old as ptl
 import numpy as np
+
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from particle_time_stepper import ForwardEulerStepper
+import particle_crossing_solver
+from particle_traj_solver import ParticleTrajectorySolver, ParticleTrajectorySolverParams
 
 num_cells = [2, 5, 10, 15, 20, 30]
 
 errors_no_crossing = [] # Forward Euler error only - scales as O(dt^2)=O(h^2)
-errors_with_crossing = [] # Forward Euler + cell transition errors
+errors_with_crossing = [] # Forward Euler + any errors due to crossing (bisection, cell transition etc.)
 
 bisection_calls_no_crossing = []
 bisection_calls_with_crossing = []
 
 for n in num_cells:
+    # Define the parent mesh
     h = 1/n 
-    mesh = UnitSquareMesh(n, n)
+    parent_mesh = UnitSquareMesh(n, n)
 
-    V = VectorFunctionSpace(mesh, "CG", 2)
+    V = VectorFunctionSpace(parent_mesh, "CG", 2)
     v = Function(V)
-    s, t = SpatialCoordinate(mesh)
+    s, t = SpatialCoordinate(parent_mesh)
 
     # x_new = s
     # y_new = t + 0.2 * sin(pi*s)*sin(pi*t)
@@ -24,11 +31,12 @@ for n in num_cells:
     x_new = s + 0.5 *s*(1-s)
     y_new = t + 0.5 *t*(1-t)
 
+    # Define the parent curved mesh
     v.interpolate(
         as_vector([x_new, y_new])
     )
-    curved_mesh = Mesh(v)
-    
+    curved_parent_mesh = Mesh(v)
+
     x0 = np.array([[0.001, 0.001]])
     u0 = np.array([0.15, 0.156])
     speed = np.linalg.norm(u0)
@@ -36,18 +44,19 @@ for n in num_cells:
     # Make the particle travel at most half a cell width to ensure that no more than one crossing occurs
     # regardless where the particle started from
     dt = 0.5 * h / speed
-    T_long = 1.5 * (h - 0.001) / speed
+    t_start = 0
+    t_end = 1.5 * (h - 0.001) / speed
 
     # Can set dt to be tiny to shrink the Forward Euler error but run long enough so that a crossing occurs
     # dt_small = 0.01 * (1/n)**2 / np.linalg.norm(u.dat.data_ro)  # O(h^2)
     
-    # Run the loop twice: once without crossing and once with a single crossing
+    # Run the loop twice: once without crossing and once long enough so that a single crossing occurs
     for T, errors_list, bisection_calls_list in [
         (dt, errors_no_crossing, bisection_calls_no_crossing),
-        (T_long, errors_with_crossing, bisection_calls_with_crossing)
+        (t_end, errors_with_crossing, bisection_calls_with_crossing)
     ]:
         
-        particle_vom = VertexOnlyMesh(curved_mesh, x0)
+        particle_vom = VertexOnlyMesh(curved_parent_mesh, x0)
         x0_vom = particle_vom.coordinates.dat.data_ro.copy()
 
         # Assign per particle velocities
@@ -55,15 +64,28 @@ for n in num_cells:
         u = Function(U, name="particle_velocity")
         u.dat.data[:] = u0
 
-        ptl.BISECTION_COUNT = 0 # reset global counter
-        T_final, removed_particles = ptl.solve_particle_traj_in_ref_space(particle_vom, curved_mesh, u, dt, T, t=0.0, plot=False)
+        stepper = ForwardEulerStepper(particle_vom, dt, u)
+
+        cell_crossing_solver = particle_crossing_solver.BisectionSolver()
+        particle_crossing_solver.BISECTION_COUNT = 0
+
+        particle_traj_solver_params = ParticleTrajectorySolverParams(
+        bary_tol=1e-9,
+        abs_time_tol=1e-9,
+        rel_time_tol=1e-9,
+        max_iters=50,
+        plot=False
+        )
+        particle_traj_solver = ParticleTrajectorySolver(stepper, cell_crossing_solver, particle_traj_solver_params)
+
+        T_final, removed_particles = particle_traj_solver.solve(t_start, T)
 
         x_final_expected = x0_vom + T_final * u.dat.data_ro
         
         err = np.linalg.norm(x_final_expected - particle_vom.coordinates.dat.data_ro)
         errors_list.append(err)
 
-        bisection_calls_list.append(ptl.BISECTION_COUNT)
+        bisection_calls_list.append(particle_crossing_solver.BISECTION_COUNT)
 
 
 # --- Check how error scales with h --
