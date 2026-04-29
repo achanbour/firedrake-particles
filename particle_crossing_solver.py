@@ -18,12 +18,12 @@ class CellCrossingSolver(ABC):
 
 @dataclass
 class BisectionSolverParams:
-    max_iters: int
+    max_iters: int=30
 
 
 BISECTION_COUNT = 0
 class BisectionSolver(CellCrossingSolver):
-    def __init__(self, params: BisectionSolverParams):
+    def __init__(self, params: BisectionSolverParams = BisectionSolverParams):
         self._params = params
 
     

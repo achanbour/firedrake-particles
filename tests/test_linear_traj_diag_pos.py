@@ -11,12 +11,13 @@ from particle_traj_solver import ParticleTrajectorySolver, ParticleTrajectorySol
 """
 Linear particle trajectory using constant velocity (identical for all particles) and initial positions on the mesh diagonal.
 """
+
 # Define the parent mesh
 parent_mesh = UnitSquareMesh(10, 10, quadrilateral=False)
 
 # Define the particles VOM
 num_particles = 10
-x_diag = np.arange(n_particles) / 10.0 + 0.05
+x_diag = np.arange(num_particles) / 10.0 + 0.05
 x0 = np.column_stack([x_diag, x_diag])
 particle_vom = VertexOnlyMesh(parent_mesh, x0)
 x0_vom = particle_vom.coordinates.dat.data_ro.copy()
@@ -41,7 +42,10 @@ print("Initial particle velocities: ", v0_vom)
 t_start = 0
 t_end = 2.6
 dt = 0.1
-bisection_params = BisectionSolverParams(max_iters=30)
+stepper = ForwardEulerStepper(particle_vom, dt, v=v)
+
+cell_crossing_solver = BisectionSolver()
+
 particle_traj_solver_params = ParticleTrajectorySolverParams(
     bary_tol=1e-9,
     abs_time_tol=1e-9,
@@ -49,9 +53,6 @@ particle_traj_solver_params = ParticleTrajectorySolverParams(
     max_iters=50,
     plot=False
 )
-
-stepper = ForwardEulerStepper(particle_vom, dt, v=v)
-cell_crossing_solver = BisectionSolver(bisection_params)
 particle_traj_solver = ParticleTrajectorySolver(stepper, cell_crossing_solver, particle_traj_solver_params)
 
 T_final, removed_particles = particle_traj_solver.solve(t_start, t_end)

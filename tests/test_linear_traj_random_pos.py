@@ -50,8 +50,7 @@ t_end = 1
 dt = 0.01
 stepper = ForwardEulerStepper(particle_vom, dt, v=v)
 
-bisection_params = BisectionSolverParams(max_iters=30)
-cell_crossing_solver = BisectionSolver(bisection_params)
+cell_crossing_solver = BisectionSolver()
 
 abs_time_tol = 1e-9
 bary_tol = 1e-9
