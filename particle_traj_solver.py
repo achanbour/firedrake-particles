@@ -88,9 +88,8 @@ class ParticleTrajectorySolver():
                 
                 self.particle_vom_updater.rebuild_vom(absorbed_vom_indices=boundary_particles_current, new_coords=new_phys_coords)
 
-                # Invalidate parloops as Function Spaces have been invalidated
-                # TODO: if we preserve the VOM topology, then we can preserve Functions and Function Spaces defined on it 
-                # so this won't be needed.
+                # Invalidate parloops as Function Spaces have been redefined
+                # TODO: if we preserve the VOM topology, then we can preserve Functions and Function Spaces defined on it.
                 # For now, rebuild all fields stored in the stepper.
                 self.stepper.invalidate()
 
@@ -199,8 +198,11 @@ class ParticleTrajectorySolver():
                     crossed_edge = int(np.argmin(abs(bary_cross[i])))
                     crossed_edge_normal = self.ref_cell.compute_reference_normal(1, crossed_edge)
                     
-                    v_ref = self.stepper.v_ref.dat.data_ro[particles_failed_global_idxs[i]]
+                    # NOTE: stepper._v_ref has already been evaluated in stepper.step()
+                    # so either re-assemble as done here or stash and reuse the results from the previous evaluation
+                    v_ref = assemble(self.stepper._v_ref).dat.data_ro[particles_failed_global_idxs[i]]
 
+                    # TODO: Test this on edge cases
                     if np.dot(crossed_edge_normal, v_ref) <= 0:
                         for other_edge in range(len(bary_cross[i])):
                             if other_edge == crossed_edge:
@@ -218,7 +220,7 @@ class ParticleTrajectorySolver():
                     next_cell = self.parent_mesh.topology.cell_facet_neighbours.data[parent_cell, crossed_edge]
 
                     if next_cell is None or next_cell == -1:
-                        # Particle hit an exterior boundary
+                        # Particle hits an exterior boundary
                         new_parent_cells[pid, 0] = parent_cell
                         boundary_particles_current.append(pid)
                         dt_remaining[pid] = 0

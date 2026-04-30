@@ -77,3 +77,6 @@ class BisectionSolver(CellCrossingSolver):
 
 class LineIntersectionSolver(CellCrossingSolver):
     pass
+
+class NewtonSolver(CellCrossingSolver):
+    pass
