@@ -135,12 +135,12 @@ class ForwardEulerStepper(ParticleTimeStepper):
         """
         if extract_unique_domain(v) is self.particle_vom:
             TFS = TensorFunctionSpace(self.particle_vom, "DG", 0)
-            self._v_ref = interpolate(invJ_expr, TFS) * v
+            self._v_ref = interpolate(self._invJ_expr, TFS) * v
         else:
             VFS = VectorFunctionSpace(self.particle_vom, "DG", 0)
-            self._v_ref = interpolate(invJ_expr * v, VFS)
+            self._v_ref = interpolate(self._invJ_expr * v, VFS)
         """
-
+        
         # Option 2: Define separate expressions for J^-1 and v and use their assembled output (Function) in the update expression
         # NOTE: currently, if the VOM changes then FunctionSpaces are swapped out.
         TFS = TensorFunctionSpace(self.particle_vom, "DG", 0)
@@ -160,18 +160,22 @@ class ForwardEulerStepper(ParticleTimeStepper):
 
         self._v_vom.interpolate(self._v)
 
+        # Both functions are on the VOM so the product is defined on a single domain.
         self._v_ref = self._invJ_fn * self._v_vom
 
+        # NOTE: Rather than having the re-evaluation (assembly) external to the the step
+        # is there a way to use option 1 so that re-evaluation is handled internally during step?
+        # It seems like having an interpolate(...) subexpression inside another interpolate isn't supported
+        # as the Interpolate Node still carries a reference to the parent mesh domain.
+        
         self._build_update_expr()
         self._build_step_callable()
 
+
     def _build_update_expr(self):
-        # self._update_expr = self._X + self._v_ref * self._dt_fn
         self._update_expr = self._X + self._v_ref * self._dt_fn
 
 
-    # NOTE: Rather than having the re-evaluation (assembly) external to the the step
-    # is there a way to bake it inside the update expression interpolation?
     def _reevaluate_fields(self):
         self._invJ_fn.interpolate(self._invJ_expr)
         self._v_vom.interpolate(self._v)
