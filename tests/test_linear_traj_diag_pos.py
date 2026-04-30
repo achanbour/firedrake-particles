@@ -40,7 +40,7 @@ print("Initial particle velocities: ", v0_vom)
 # dt=0.1, t_end=7.6: 2 particles removed
 
 t_start = 0
-t_end = 2.6
+t_end = 7.6
 dt = 0.1
 stepper = ForwardEulerStepper(particle_vom, dt, v)
 

@@ -15,10 +15,6 @@ Linear particle trajectory using constant velocity (identical for all particles)
 
 np.random.seed(42)
 
-t = 0.0 # current time
-dt = 0.01 # time step
-T = 1.0
-
 # Define the parent mesh
 parent_mesh = UnitSquareMesh(10, 10, quadrilateral=False)
 
@@ -45,7 +41,7 @@ print("Initial particle velocities: ", v)
 
 
 # Define solvers
-t_start = 0.0
+t_start = 0
 t_end = 1
 dt = 0.01
 stepper = ForwardEulerStepper(particle_vom, dt, v)

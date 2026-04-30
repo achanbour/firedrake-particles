@@ -200,7 +200,7 @@ class ParticleTrajectorySolver():
                     
                     # NOTE: stepper._v_ref has already been evaluated in stepper.step()
                     # so either re-assemble as done here or stash and reuse the results from the previous evaluation
-                    v_ref = assemble(self.stepper._v_ref).dat.data_ro[particles_failed_global_idxs[i]]
+                    v_ref = self.stepper.v_ref.dat.data_ro[particles_failed_global_idxs[i]]
 
                     # TODO: Test this on edge cases
                     if np.dot(crossed_edge_normal, v_ref) <= 0:
