@@ -102,8 +102,8 @@ class VertexOnlyMeshUpdater:
         # we only delete the cached properties that depend on parent cell ownership.
         topology = self.vom.topology
         for name in (
-            "cell_parent_cell_list",
-            "cell_parent_cell_map",
+            # "cell_parent_cell_list",
+            # "cell_parent_cell_map",
             "cell_parent_base_cell_list",
             "cell_parent_base_cell_map",
             "cell_parent_extrusion_height_list",
@@ -114,6 +114,10 @@ class VertexOnlyMeshUpdater:
 
             if name in self.vom.__dict__:
                 del self.vom.__dict__[name]
+        
+        # Mutate the map instead of invalidating it
+        if "cell_parent_cell_list" in topology.__dict__:
+            topology.__dict__["cell_parent_cell_list"][:] = next_parent_cells[:]
 
         # 5) Update reference coordinates Function
         # NOTE: Since new_ref_coords is already in VOM ordering, AND assuming the VOM does not get reodered,
@@ -242,6 +246,7 @@ class VertexOnlyMeshUpdater:
 
             if name in self.vom.__dict__:
                 del self.vom.__dict__[name]
+
 
     def _update_coordinates(self, embedding):
         coords_embedded = embedding["coords"]

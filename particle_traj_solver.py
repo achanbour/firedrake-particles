@@ -126,6 +126,7 @@ class ParticleTrajectorySolver():
                 break
 
             self.inner_loop_iter += 1
+
             particles_with_dt_remaining_idxs = np.where(particles_have_dt_remaining)[0]
             self.particles_inner_loop_iter[particles_with_dt_remaining_idxs] += 1
 
@@ -216,6 +217,7 @@ class ParticleTrajectorySolver():
                 # Identify the neighbouring cell for each particle and its reference coordinates in that new cell
                 for i, pid in enumerate(particles_failed_global_idxs):
                     parent_cell = parent_cells[pid, 0]
+
                     crossed_edge = crossed_edge_idxs[particles_failed_local_idxs[i]]
                     next_cell = self.parent_mesh.topology.cell_facet_neighbours.data[parent_cell, crossed_edge]
 
@@ -240,7 +242,7 @@ class ParticleTrajectorySolver():
                                             },
                                             indices=particles_failed_global_idxs,
                                             level="info")
-                
+
             # Update the particle VOM
             self.particle_vom_updater.update_ref_view(new_parent_cells, new_ref_pos)
         else:

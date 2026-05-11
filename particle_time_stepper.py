@@ -95,7 +95,7 @@ class ParticleTimeStepper(ABC):
         """Rebuild all fields eagerly after a change to the VOM's topology"""
         for f in self._fields:
             if isinstance(f, Function):
-                f._match_mesh_topology_version()
+                f._match_mesh_topology_version() # rebuilds the FS
             else:
                 raise TypeError("Encountered a field in the stepper that is not a Function.")
     
@@ -108,7 +108,7 @@ class ParticleTimeStepper(ABC):
 
 
     def step(self):
-        self._reevaluate_fields()
+        # self._reevaluate_fields()
         self._check_step_callable_is_current()
         result = self.step_callable() # execute cached parloops
         return result
@@ -131,16 +131,29 @@ class ForwardEulerStepper(ParticleTimeStepper):
         x = SpatialCoordinate(self.particle_vom._parent_mesh)
         self._invJ_expr = inv(ReferenceGrad(x))
 
-        # Option 1: Define and store the symbolic expression for v_ref and use that in the update expression
-        """
+        self._v = v
         if extract_unique_domain(v) is self.particle_vom:
+            # Appending self._v to self._fields ensures that it gets resized appropriately to match the new topology
+            # so that the interpolation to self._v is correct
+            self._fields.append(self._v)
+
+        # Option 1: Define and store the symbolic expression for v_ref and use that in the update expression
+        if extract_unique_domain(self._v) is self.particle_vom:
             TFS = TensorFunctionSpace(self.particle_vom, "DG", 0)
-            self._v_ref = interpolate(self._invJ_expr, TFS) * v
+
+            # NOTE: TFS becomes stale when particle_vom is rebuilt!
+            # Hence we register the fields so their FS get rebuilt.
+            self.invJ_fn = Function(TFS)
+            self._fields.append(self.invJ_fn)
+            self._v_ref = interpolate(self._invJ_expr, self.invJ_fn.function_space()) * self._v
         else:
             VFS = VectorFunctionSpace(self.particle_vom, "DG", 0)
-            self._v_ref = interpolate(self._invJ_expr * v, VFS)
+
+            self._v_ref_fn = Function(VFS)
+            self._fields.append(self._v_ref_fn)
+            self._v_ref = interpolate(self._invJ_expr * self._v, self._v_ref_fn.function_space())
+
         """
-        
         # Option 2: Define separate expressions for J^-1 and v and use their assembled output (Function) in the update expression
         # NOTE: currently, if the VOM changes then FunctionSpaces are swapped out.
         TFS = TensorFunctionSpace(self.particle_vom, "DG", 0)
@@ -151,22 +164,14 @@ class ForwardEulerStepper(ParticleTimeStepper):
         self._v_vom = Function(VFS)
         self._fields.append(self._v_vom)
 
-        self._v = v
-
-        if extract_unique_domain(v) is self.particle_vom:
-            # Appending self._v to self._fields ensures that it gets resized appropriately to match the new topology
-            # so that the interpolation to self._v_vom is correct
-            self._fields.append(self._v)
-
         self._v_vom.interpolate(self._v)
 
         # Both functions are on the VOM so the product is defined on a single domain.
         self._v_ref = self._invJ_fn * self._v_vom
+        """
 
-        # NOTE: Rather than having the re-evaluation (assembly) external to the the step
+        # NOTE: Rather than re-evaluating the fields externally to stepper.step
         # is there a way to use option 1 so that re-evaluation is handled internally during step?
-        # It seems like having an interpolate(...) subexpression inside another interpolate isn't supported
-        # as the Interpolate Node still carries a reference to the parent mesh domain.
         
         self._build_update_expr()
         self._build_step_callable()
@@ -186,4 +191,24 @@ class ForwardEulerStepper(ParticleTimeStepper):
     
     @property
     def v_ref(self):
-        return assemble(interpolate(self._v_ref, self._v_vom.function_space()))
+        # return assemble(interpolate(self._v_ref, self._v_vom.function_space()))
+        return assemble(interpolate(self._v_ref, self._v.function_space()))
+
+
+"""
+evaluating the update expr amounts to doing assemble(interpolate(update_expr, VOM)) where update expr is: 
+X + dt * v_ref where v_ref = invJ * v
+
+- invJ = inv(Reference(Grad(x))) lives on parent mesh
+- v may live on VOM or on parent mesh
+- so v_ref = interpolate(invJ * v, VOM) or interpolate(invJ, VOM) * v
+
+instead of assembling v_ref into a Function (which involves assembles two interpolations), keep v_ref symbolic in the update expr.
+
+currently fails in get_interpolator as extract_unique_domain raises an error
+
+interpolate(interpolate(invJ, VOM) * v, VFS) assembles into a Coefficient on the VOM
+
+Try splitting the operand using CoefficientSplitter(interpolate(invJ, VOM) * v) as is done in
+MixedInterpolator on forms using arguments.
+"""
