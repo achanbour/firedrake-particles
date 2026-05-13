@@ -1,7 +1,9 @@
 import numpy as np
 from firedrake import *
 from ufl.differentiation import ReferenceGrad
-from firedrake.interpolation import get_interpolator
+
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 mesh = UnitSquareMesh(5,5)
 x = SpatialCoordinate(mesh)
@@ -28,8 +30,6 @@ dt = 0.1
 T = TensorFunctionSpace(particle_vom, "DG", 0)
 invJ_fn = Function(T)
 invJ_fn.interpolate(invJ_expr)
-
-breakpoint()
 
 update_expr = X + dt * invJ_fn * u
 new_coords = assemble(interpolate(update_expr, particle_vom.reference_coordinates.function_space()))

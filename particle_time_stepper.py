@@ -145,12 +145,13 @@ class ForwardEulerStepper(ParticleTimeStepper):
             # Hence we register the fields so their FS get rebuilt.
             self.invJ_fn = Function(TFS)
             self._fields.append(self.invJ_fn)
+            # self._v_ref = interpolate(self._invJ_expr, TFS) * self._v
             self._v_ref = interpolate(self._invJ_expr, self.invJ_fn.function_space()) * self._v
         else:
             VFS = VectorFunctionSpace(self.particle_vom, "DG", 0)
-
             self._v_ref_fn = Function(VFS)
             self._fields.append(self._v_ref_fn)
+            # self._v_ref = interpolate(self._invJ_expr, VFS) * self._v
             self._v_ref = interpolate(self._invJ_expr * self._v, self._v_ref_fn.function_space())
 
         """
