@@ -35,7 +35,7 @@ callable = interpolator._get_callable() # parloops
 # res1 = assemble(update_expr)
 res1 = callable()
 
-# Mutate the VOM as in the inner loop: update ref. coords. + parent cell
+# Mutate the VOM as in the inner loop of the Particle Trajectory Solver (update ref. coords. + parent cell)
 current_parent_cells = partibcle_vom.topology.cell_parent_cell_list.copy()
 next_parent_cells = current_parent_cells.copy()
 next_cell = parent_mesh.topology.cell_facet_neighbours.data[current_parent_cells[0, 0], 0] # get neighbour across facet 0
