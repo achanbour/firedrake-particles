@@ -75,8 +75,31 @@ class BisectionSolver(CellCrossingSolver):
 
         return t_cross, X_cross, bary_cross
 
+
 class LineIntersectionSolver(CellCrossingSolver):
-    pass
+    def solve(self, stepper, ref_cell, crossing_particle_idxs, crossing_particle_dt):
+        X_start = stepper.X.dat.data_ro[crossing_particle_idxs]
+        v = stepper.v_ref.dat.data_ro[crossing_particle_idxs]
+
+        # Compute barycentric coordinates at the start and end
+        X_end = X_start + v * crossing_particle_dt[:, None]
+        bary_start = ref_cell.compute_barycentric_coordinates(X_start)
+        bary_end = ref_cell.compute_barycentric_coordinates(X_end)
+
+        # For each particle, solve lambda(t) = 0 where
+        # lambda(t) = lambda(0) + t*(lambda(dt) - lambda(0)/dt
+
+        d_bary = bary_end - bary_start
+        dt = crossing_particle_dt[:, None]
+        t_face = np.where(d_bary < 0, dt * bary_start/d_bary, np.inf)
+        t_face = np.where((t_cross >= 0) & (t_cross <= dt), t_cross, np.inf)
+        t_cross = np.min(t_face, axis=1)
+
+        X_cross = X_start + t_cross[:, None] * v
+        bary_cross = ref_cell.compute_barycentric_coordinates(X_cross)
+
+        return t_cross, X_cross, bary_cross
+
 
 class NewtonSolver(CellCrossingSolver):
     pass

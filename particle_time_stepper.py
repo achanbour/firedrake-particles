@@ -102,18 +102,16 @@ class ParticleTimeStepper(ABC):
         pass
 
 
-
     # NOTE: To be removed once rebuild_vom and rebuild_function are fixed.
     def invalidate(self):
         """Mark all callables as stale."""
-        self._rebuild_fields() # mutates the fields (Functions) in places
-        self._rebuild_exprs() # produces a new symbolic expr hence need to re-assign the update expr
-        self._build_update_expr()
+        self._rebuild_fields() # migrates the Functions' data and swaps their FS
+        self._rebuild_exprs() # reconstruct the interpolation expression to reference the new FS
+        self._build_update_expr() # new interpolate node implies the UFL expression needs to be reconstructed
         self._step_callable_is_current = False
 
 
     def step(self):
-        # self._reevaluate_fields()
         self._check_step_callable_is_current()
         result = self.step_callable() # assemble the cached interpolation
         return result
@@ -179,5 +177,5 @@ class ForwardEulerStepper(ParticleTimeStepper):
     
     @property
     def v_ref(self):
-        # TODO: Cache the result of from step and reuse here
+        # TODO: Cache the result from step and reuse
         return assemble(interpolate(self._v_ref, self.particle_vom.coordinates.function_space()))

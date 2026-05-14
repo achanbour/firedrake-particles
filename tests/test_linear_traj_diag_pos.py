@@ -44,6 +44,22 @@ t_end = 2.7
 dt = 0.1
 stepper = ForwardEulerStepper(particle_vom, dt, v)
 
+import time
+_step_total = 0.0
+_step_calls = 0
+_original_step = stepper.step
+
+def _timed_step():
+    global _step_total, _step_calls
+    t0 = time.perf_counter_ns()
+    result = _original_step()
+    t1 = time.perf_counter_ns()
+    _step_total += (t1 - t0)
+    _step_calls += 1
+    return result
+
+stepper.step = _timed_step
+
 cell_crossing_solver = BisectionSolver()
 
 particle_traj_solver_params = ParticleTrajectorySolverParams(
@@ -69,3 +85,6 @@ x_final_expected_survived = x_final_expected[keep]
 
 print("Expected final positions: ", x_final_expected_survived)
 print("Error: ", np.linalg.norm(x_final_expected_survived - particle_vom.coordinates.dat.data_ro, axis=1))
+
+print()
+print(f"stepper.step(): {_step_calls} calls, {_step_total*10e-9:.6f}s total, {(_step_total/_step_calls)*10e-9:.3f}s/call")

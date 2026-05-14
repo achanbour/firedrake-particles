@@ -76,7 +76,7 @@ class ParticleTimeStepper(ABC):
         """Build and cache the step interpolation callables."""
         interpolation_expr = interpolate(self._update_expr, self._X.function_space()) # symbolic interpolation expr
         interpolator = get_interpolator(interpolation_expr) # numerical interpolator
-        self.step_callable = interpolator._get_callable() # parloops
+        self.step_callable = interpolator._get_callable() # callable that executes the parloops
         self._step_callable_is_current = True
     
 
@@ -84,11 +84,6 @@ class ParticleTimeStepper(ABC):
         """Trigger a rebuild of the step interpolation callables."""
         if not self._step_callable_is_current:
             self._build_step_callable()
-
-
-    def _reevaluate_fields(self):
-        """Re-evaluate all fields needed by step."""
-        pass
 
 
     def _rebuild_fields(self):
@@ -100,17 +95,28 @@ class ParticleTimeStepper(ABC):
                 raise TypeError("Encountered a field in the stepper that is not a Function.")
     
 
+    def _rebuild_exprs(self):
+        """Rebuild all expressions that form the update expression"""
+        pass
+
+    def _reevaluate_fields(self):
+        """Re-evaluate all fields that form the update expression"""
+        pass
+
+
     # NOTE: To be removed once rebuild_vom and rebuild_function are fixed.
     def invalidate(self):
         """Mark all callables as stale."""
-        self._rebuild_fields()
+        self._rebuild_fields() # migrates the Functions' data and swaps their FS
+        self._rebuild_exprs() # reconstruct the interpolation expression to reference the new FS
+        self._build_update_expr() # new interpolate node implies the UFL expression needs to be reconstructed
         self._step_callable_is_current = False
 
 
     def step(self):
-        # self._reevaluate_fields()
+        # self._reevaluate_fields
         self._check_step_callable_is_current()
-        result = self.step_callable() # execute cached parloops
+        result = self.step_callable() # execute the cached parloops
         return result
 
 
@@ -181,15 +187,22 @@ class ForwardEulerStepper(ParticleTimeStepper):
     def _reevaluate_fields(self):
         self._invJ_fn.interpolate(self._invJ_expr)
         self._v_vom.interpolate(self._v)
+
+    def _rebuild_exprs(self):
+        if extract_unique_domain(self._v) is self.particle_vom:
+            self._v_ref = interpolate(self._invJ_expr, self.invJ_fn.function_space()) * self._v
+        else:
+            self._v_ref = interpolate(self._invJ_expr * self._v, self._v_ref_fn.function_space())
     
     @property
     def v(self):
         return self._v
+        
     
     @property
     def v_ref(self):
         # return assemble(interpolate(self._v_ref, self._v_vom.function_space()))
-        return assemble(interpolate(self._v_ref, self._v.function_space()))
+        return assemble(interpolate(self._v_ref, self.particle_vom.coordinates.function_space()))
 
 
 """

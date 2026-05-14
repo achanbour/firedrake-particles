@@ -35,17 +35,21 @@ callable = interpolator._get_callable() # parloops
 # res1 = assemble(update_expr)
 res1 = callable()
 
-# Move particle to a neighbouring cell (different triangle orientation implies different invJ)
-current_parent_cells = particle_vom.topology.cell_parent_cell_list.copy()
+# Mutate the VOM as in the inner loop: update ref. coords. + parent cell
+current_parent_cells = partibcle_vom.topology.cell_parent_cell_list.copy()
 next_parent_cells = current_parent_cells.copy()
-next_cell = parent_mesh.topology.cell_facet_neighbours.data[current_parent_cells[0, 0], 0]
+next_cell = parent_mesh.topology.cell_facet_neighbours.data[current_parent_cells[0, 0], 0] # get neighbour across facet 0
 next_parent_cells[0, 0] = next_cell
-new_ref_pos = np.array([[0.5, 0.5]])  # same ref coords as initial so X contribution is identical
+new_ref_pos = np.array([[0.5, 0.5]])  # same ref coords as initial
 
 particle_vom_updater.update_ref_view(next_parent_cells, new_ref_pos)
 
 # res2 = assemble(update_expr)
 res2 = callable()
+
+
+breakpoint()
+
 
 # Calling assemble vs. executing parloops directly
 #
@@ -54,7 +58,5 @@ res2 = callable()
 # was frozen into the outer parloop's args.
 #
 # If we call assemble then the inner interpolation expression seems to get re-evaluated. The reason is that assemble calls `get_interpolator(expr)`
-# which just reuses the cached Interpolator object. But then `interpolator.assemble(...)` is called which hits `self._get_callable` (line 400) rebuilding the callable 
-# from scratch. 
-
-breakpoint()
+# which reuses the cached Interpolator object. But then `interpolator.assemble(...)` is called which hits `self._get_callable` which calls `_build_interpolation_callables`
+# which rebuilds the parloops and their arguments.
