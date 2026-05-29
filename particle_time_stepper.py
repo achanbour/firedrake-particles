@@ -96,18 +96,12 @@ class ParticleTimeStepper(ABC):
                 f._match_mesh_topology_version()
             else:
                 raise TypeError("Cannot rebuild a field that is not a Function.")
-    
-    def _rebuild_exprs(self):
-        """Rebuild all expressions"""
-        pass
 
 
-    # NOTE: To be removed once rebuild_vom and rebuild_function are fixed.
+    # NOTE: Most of this will be removed once rebuild_vom and rebuild_function are fixed.
     def invalidate(self):
         """Mark all callables as stale."""
         self._rebuild_fields() # migrates the Functions' data and swaps their FS
-        self._rebuild_exprs() # reconstruct the interpolation expression to reference the new FS
-        self._build_update_expr() # new interpolate node implies the UFL expression needs to be reconstructed
         self._step_callable_is_current = False
 
 
@@ -165,17 +159,11 @@ class ForwardEulerStepper(ParticleTimeStepper):
     def _build_update_expr(self):
         self._update_expr = self._X + self._v_ref * self._dt_fn
 
-    def _rebuild_exprs(self):
-        if extract_unique_domain(self._v) is self.particle_vom:
-            self._v_ref = interpolate(self._invJ_expr, self.invJ_fn.function_space()) * self._v
-        else:
-            self._v_ref = interpolate(self._invJ_expr * self._v, self._v_ref_fn.function_space())
-
     @property
     def v(self):
         return self._v
     
+    # TODO: Cache the result from step and reuse
     @property
     def v_ref(self):
-        # TODO: Cache the result from step and reuse
         return assemble(interpolate(self._v_ref, self.particle_vom.coordinates.function_space()))

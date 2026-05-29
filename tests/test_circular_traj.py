@@ -53,7 +53,7 @@ particle_traj_solver_params = ParticleTrajectorySolverParams(
     abs_time_tol=1e-9,
     rel_time_tol=0,
     max_iters=50,
-    plot=False
+    plot=True
 )
 particle_traj_solver = ParticleTrajectorySolver(stepper, cell_crossing_solver, particle_traj_solver_params)
 

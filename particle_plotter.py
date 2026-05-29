@@ -50,5 +50,10 @@ class ParticlePlotter(Protocol):
         plt.close(self._fig)
 
 
+# Generate a movie of moving particles
+# ffmpeg -r 15 -i output/frame_%04d.png -c:v libx264 -pix_fmt yuv420p particles.mp4
+# use `-crf 18` for higher quality, less compression
+# Use `ls -1A | wc -l` to count generated frames in output directory
+
 # An alternative plotting method makes use of matplotlib's FuncAnimation
 # see https://github.com/firedrakeproject/firedrake/blob/release/docs/notebooks/04-burgers.ipynb
