@@ -60,16 +60,13 @@ particle_traj_solver_params = ParticleTrajectorySolverParams(
 particle_traj_solver = ParticleTrajectorySolver(stepper, cell_crossing_solver, particle_traj_solver_params)
 
 with PETSc.Log.Event("ParticleTrajectoryLoop"):
-    T_final, removed_particles = particle_traj_solver.solve(t_start, t_end)
+    T_final, surviving_particle_ids = particle_traj_solver.solve(t_start, t_end)
 
 print("Final particle positions: ", particle_vom.coordinates.dat.data_ro)
-print("Removed particles: ", removed_particles)
 
 x_final_expected = x0_vom + T_final*v0_vom
 
-keep = np.ones(x_final_expected.shape[0], dtype=bool)
-keep[removed_particles] = False
-x_final_expected_survived = x_final_expected[keep]
+x_final_expected_survived = x_final_expected[surviving_particle_ids]
 
 print("Exact final particle positions: ", x_final_expected_survived)
 print("Error: ", np.linalg.norm(x_final_expected_survived - particle_vom.coordinates.dat.data_ro, axis=1))

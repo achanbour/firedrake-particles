@@ -77,13 +77,11 @@ for abs_time_tol in abs_time_tols:
     )
 
     particle_traj_solver = ParticleTrajectorySolver(stepper, cell_crossing_solver, particle_traj_solver_params)
-    T_final, removed_particles = particle_traj_solver.solve(t_start, t_end)
+    T_final, surviving_particle_ids = particle_traj_solver.solve(t_start, t_end)
 
     bisection_calls.append(particle_crossing_solver.BISECTION_COUNT)
 
-    if len(removed_particles) > 0:
-        keep[removed_particles] = False
-        x_analytical = x_analytical[keep]
+    x_analytical = x_analytical[surviving_particle_ids]
         
     x_numerical = particle_vom.coordinates.dat.data_ro
     err = np.linalg.norm(x_numerical-x_analytical)

@@ -530,3 +530,16 @@ class VertexOnlyMeshUpdater:
             # This should have been already set to None when the VOM was first constructed
             self.vom.reference_coordinates = None
 
+        # Compute and return the reordering map
+        # After rebuild:
+        # new Firedrake cell k'  ->  swarm point perm_new[k']  (via _dm_renumbering)
+        # swarm point p          -> old Firedrake cell inputindex[p]
+        # old Firedrake cell k   ->  old_particle_ids[k]
+        # new_particle_ids[k'] = old_particle_ids[inputindex[perm_new[k']]]
+
+        n_local = topology.cell_set.size
+        perm_new = topology._dm_renumbering.getIndices()[:n_local]
+        inputindex = swarm.getField("inputindex").ravel()[:n_local].copy()
+        swarm.restoreField("inputindex")
+        return inputindex[perm_new]
+

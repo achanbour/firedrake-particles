@@ -51,7 +51,6 @@ class ParticleTrajectorySolver():
 
     def solve(self, t_start, t_end):
         particle_ids = np.arange(self.particle_vom.num_vertices())
-        boundary_particles = []
         self.outer_loop_iter = 0
         
         if self.plotter:
@@ -82,11 +81,9 @@ class ParticleTrajectorySolver():
 
             # Handle boundary particles and update the particle VOM
             if len(boundary_particles_current) > 0:
-                # Need to rebuild the VOM topologically
-                for pid in boundary_particles_current:
-                    boundary_particles.append(particle_ids[pid])
-                
-                self.particle_vom_updater.rebuild_vom(absorbed_vom_indices=boundary_particles_current, new_coords=new_phys_coords)
+                # Rebuild the VOM topologically
+                old_particle_ids = particle_ids
+                reorder_map = self.particle_vom_updater.rebuild_vom(absorbed_vom_indices=boundary_particles_current, new_coords=new_phys_coords)
 
                 # Invalidate parloops as Function Spaces have been redefined
                 # TODO: if we preserve the VOM topology, then we can preserve Functions and Function Spaces defined on it.
@@ -94,9 +91,7 @@ class ParticleTrajectorySolver():
                 self.stepper.invalidate()
 
                 # Update particle_ids so that it is always in sync with the latest particle set
-                survived = np.ones(len(particle_ids), dtype=bool)
-                survived[boundary_particles_current] = False
-                particle_ids = particle_ids[survived]
+                particle_ids = old_particle_ids[reorder_map]
             else:
                 # Update the VOM's coordinates (topology stays the same)
                 self.particle_vom.coordinates.dat.data_wo[:] = new_phys_coords.dat.data_ro
@@ -109,7 +104,7 @@ class ParticleTrajectorySolver():
         if self.plotter:
             self.plotter.close()
             
-        return t_start, boundary_particles
+        return t_start, particle_ids
 
         
     def _run_inner_loop(self):

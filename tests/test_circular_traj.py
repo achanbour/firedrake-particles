@@ -53,14 +53,13 @@ particle_traj_solver_params = ParticleTrajectorySolverParams(
     abs_time_tol=1e-9,
     rel_time_tol=0,
     max_iters=50,
-    plot=True
+    plot=False
 )
 particle_traj_solver = ParticleTrajectorySolver(stepper, cell_crossing_solver, particle_traj_solver_params)
 
-T_final, removed_particles = particle_traj_solver.solve(t_start, t_end)
+T_final, surviving_particle_ids = particle_traj_solver.solve(t_start, t_end)
 
 print("Final particle positions: ", particle_vom.coordinates.dat.data_ro)
-print("Removed particles: ", removed_particles)
 
 from particle_crossing_solver import BISECTION_COUNT
 print("Number of bisection calls to resolve cell crossings: ", BISECTION_COUNT)

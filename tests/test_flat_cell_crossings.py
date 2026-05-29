@@ -55,12 +55,13 @@ for n in num_cells:
     )
     particle_traj_solver = ParticleTrajectorySolver(stepper, cell_crossing_solver, particle_traj_solver_params)
 
-    T_final, removed_particles = particle_traj_solver.solve(t_start, t_end)
+    T_final, surviving_particle_ids = particle_traj_solver.solve(t_start, t_end)
     
     print()
     print("Final particle position: ", particle_vom.coordinates.dat.data_ro)
 
     x_final_expected = x0_vom + T_final * v.dat.data_ro
+    x_final_expected = x_final_expected[surviving_particle_ids]
 
     print("Expected final position: ", x_final_expected)
     err = np.linalg.norm(x_final_expected - particle_vom.coordinates.dat.data_ro)

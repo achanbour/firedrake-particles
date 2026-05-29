@@ -78,9 +78,10 @@ for n in num_cells:
         )
         particle_traj_solver = ParticleTrajectorySolver(stepper, cell_crossing_solver, particle_traj_solver_params)
 
-        T_final, removed_particles = particle_traj_solver.solve(t_start, T)
+        T_final, surviving_particle_ids = particle_traj_solver.solve(t_start, T)
 
         x_final_expected = x0_vom + T_final * u.dat.data_ro
+        x_final_expected = x_final_expected[surviving_particle_ids]
         
         err = np.linalg.norm(x_final_expected - particle_vom.coordinates.dat.data_ro)
         errors_list.append(err)
