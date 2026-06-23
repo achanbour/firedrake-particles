@@ -139,6 +139,7 @@ class ForwardEulerStepper(ParticleTimeStepper):
         # NOTE: The FS defined on the particle VOM may become stale when the particle VOM gets rebuilt!
         # Registering the fields ensures their underlying FS get rebuilt, and therefore that the target space in the interpolation
         # is always defined on the latest VOM.
+
         if extract_unique_domain(self._v) is self.particle_vom:
             TFS = TensorFunctionSpace(self.particle_vom, "DG", 0)
             # self._v_ref = interpolate(self._invJ_expr, TFS) * self._v

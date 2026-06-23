@@ -59,7 +59,7 @@ class ParticleTrajectorySolver():
         while t_start < t_end - 1e-12:
             self.outer_loop_iter += 1
             self.logger.outer_loop(self.outer_loop_iter, t_start, self.stepper.dt, t_end, self.num_particles)
-
+            
             # Run the inner time step loop
             boundary_particles_current = self._run_inner_loop()
 

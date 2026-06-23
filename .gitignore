@@ -1,5 +1,8 @@
 .DS_Store
 .vscode/
+.claude/
 __pycache__/
 output/
 *.mp4
+*.pvd
+*.vtu
