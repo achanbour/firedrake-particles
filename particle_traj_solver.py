@@ -212,21 +212,23 @@ class ParticleTrajectorySolver():
                 # Identify the neighbouring cell for each particle and its reference coordinates in that new cell
                 for i, pid in enumerate(particles_failed_global_idxs):
                     parent_cell = parent_cells[pid, 0]
-
+                    neighbours  = self.parent_mesh.topology.cell_facet_neighbours.data[parent_cell]
                     crossed_edge = crossed_edge_idxs[particles_failed_local_idxs[i]]
                     next_cell = self.parent_mesh.topology.cell_facet_neighbours.data[parent_cell, crossed_edge]
 
+                    assert next_cell == -1 or next_cell in neighbours, \
+                        f"particle {pid}: non-adjacent {next_cell} from {parent_cell} (nbrs {neighbours})"
+
                     if next_cell is None or next_cell == -1:
-                        # Particle hits an exterior boundary
                         new_parent_cells[pid, 0] = parent_cell
                         boundary_particles_current.append(pid)
                         dt_remaining[pid] = 0
-                        warnings.warn(f"Particle {pid} attempted to cross an exterior boundary facet from cell {parent_cell}")
+                        warnings.warn(f"Particle {pid} attempted to cross an exterior boundary from cell {parent_cell}")
                     else:
                         new_parent_cells[pid, 0] = next_cell
-                    
-                    A_facet_coord_transform, b_facet_coord_transform = self.parent_mesh.topology.cell_facet_coord_transforms
-                    new_ref_pos[pid] = A_facet_coord_transform.data[parent_cell, crossed_edge] @ X_cross[i] + b_facet_coord_transform.data[parent_cell, crossed_edge]
+
+                    A_facet, b_facet = self.parent_mesh.topology.cell_facet_coord_transforms
+                    new_ref_pos[pid] = A_facet.data[parent_cell, crossed_edge] @ X_cross[i] + b_facet.data[parent_cell, crossed_edge]
                 
                 self.logger.print_particles("Failed particles - Cell transitions",
                                             {

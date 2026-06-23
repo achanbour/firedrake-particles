@@ -98,10 +98,11 @@ class ParticleTimeStepper(ABC):
                 raise TypeError("Cannot rebuild a field that is not a Function.")
 
 
-    # NOTE: Most of this will be removed once rebuild_vom and rebuild_function are fixed.
+    # Eargerly update the fields and rebuild the symbolic interpolation expression
+    # Skip now that FS are retained and Functions are correctly resized 
     def invalidate(self):
         """Mark all callables as stale."""
-        self._rebuild_fields() # migrates the Functions' data and swaps their FS
+        self._rebuild_fields()
         self._step_callable_is_current = False
 
 
@@ -131,8 +132,7 @@ class ForwardEulerStepper(ParticleTimeStepper):
         self._v = v
 
         if extract_unique_domain(v) is self.particle_vom:
-            # Appending self._v to self._fields ensures that it gets resized appropriately to match the new topology
-            # so that the interpolation to self._v is correct
+            # Appending to self._fields ensures that Functions get resized appropriately to match the new topology
             self._fields.append(self._v)
 
         # Define and store the symbolic expression for v_ref to be used in the update expression

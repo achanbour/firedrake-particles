@@ -139,9 +139,9 @@ u, p = split(z)  # Returns symbolic UFL expression for u and p
 z.subfunctions[0].rename("Velocity")
 z.subfunctions[1].rename("Pressure")
 
-# Define a field with 3 components to store the particles velocities (used to plot streamlines in paraview)
-V_out = VectorFunctionSpace(mesh, "CG", 2, dim=3)
-u_out = Function(V_out, name="Velocity3D")
+# Define a concrete Function to store the velocity
+u_fn = Function(V, name="u_stepper")
+u_fn.assign(z.subfunctions[0])
 
 # +
 Ra = Constant(1e4)  # Rayleigh number
@@ -207,7 +207,8 @@ stokes_solver = StokesSolver(
 )
 
 # XXX this doesn't re-interpolate u when the VOM moves (or time changes...?)
-stepper = ForwardEulerStepper(particle_vom, 0.0, z.subfunctions[0])
+stepper = ForwardEulerStepper(particle_vom, 0.0, u) # can supply z.subfunctions[0]
+# stepper = ForwardEulerStepper(particle_vom, 0.0, u_fn)
 cell_crossing_solver = BisectionSolver()
 particle_traj_solver_params = ParticleTrajectorySolverParams(
   bary_tol=1e-9,
@@ -234,8 +235,7 @@ u_at_points.interpolate(z.subfunctions[0])
 for timestep in range(0, timesteps):
     # Write output:
     if timestep % output_frequency == 0:
-        u_out.interpolate(as_vector([z.subfunctions[0][0], z.subfunctions[0][1], 0]))
-        output_file.write(*z.subfunctions, T, u_out)
+        output_file.write(*z.subfunctions, T)
         write_particle_vtk(particle_file_base.format(particle_file_count), particle_vom, u_at_points)
         particle_file_count += 1
 
@@ -244,12 +244,27 @@ for timestep in range(0, timesteps):
     stepper._dt = dt
     time += dt
 
-    # Solve Stokes sytem:
+    # Solve Stokes sytem: updates u given T
     stokes_solver.solve()
 
-    # Temperature system:
+    # Temperature system: updates T given u 
     energy_solver.solve()
 
+    # Transfer the new solution over to the velocity function held by the stepper
+    # u_fn.interpolate(z.subfunctions[0])
+    # u_fn.assign(z.subfunctions[0])
+    
+    # if timestep == 80:
+    #     # zero out the velocity on this step and check whether particles have moved
+    #     # if so, this suggests that the stepper is using a stale velocity
+    #     # u_fn.dat.data_wp[0] = 0.0
+    #     z.subfunctions[0].dat.data_wo[:] = 0.0
+    #     pos0 = particle_vom.coordinates.dat.data_ro.copy()
+    #     particle_traj_solver.solve(time_start, time)
+    #     moved = np.max(np.abs(particle_vom.coordinates.dat.data_ro - pos0))
+    #     print(f"moved on zero velocity: {moved:.3e} (should be approx. 0)")
+    #     break
+    # else:
     particle_traj_solver.solve(time_start, time)
 
     u_at_points.interpolate(z.subfunctions[0])
