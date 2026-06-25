@@ -11,19 +11,32 @@ from particle_time_stepper import ForwardEulerStepper
 from particle_crossing_solver import BisectionSolver, BisectionSolverParams
 from particle_traj_solver import ParticleTrajectorySolver, ParticleTrajectorySolverParams
 
-def write_particle_vtk(fname, vom, function, coordinates=None):
+# TODO: append particle IDs all the time?
+def write_particle_vtk(fname, vom, functions, coordinates=None):
     if coordinates is None:
         coordinates = vom.coordinates.dat.data_ro
-    coordinates = np.pad(coordinates, (0,1))
-    print("writing with coordinates:", coordinates)
-    dat = function.dat.data_ro
-    dat = np.pad(dat, (0,1))
-    print("writing with data:", dat)
+    coordinates = np.pad(coordinates, ((0,0), (0,1)))
     num_points = coordinates.shape[0]
+
+    # Accept a single function or a list of functions
+    if not isinstance(functions, (list, tuple)):
+        functions = [functions]
+    
+    # Build (name, padded-array) pairs
+    fields = []
+    for i, fn in enumerate(functions):
+        arr = fn.dat.data_ro
+        if fn.name().lower().endswith(("id", "ids")):
+            arr = arr.astype(np.int64)
+        arr = np.ascontiguousarray(fn.dat.data_ro)
+        if arr.ndim > 1:
+            arr = np.pad(arr, ((0, 0), (0, 3 - arr.shape[1])))   # -> width 3
+        fields.append((fn.name() or f"field_{i}", np.ascontiguousarray(arr)))
 
     def write_array_descriptor(f, name, arr, offset):
         nbytes = 0
-        ncmp = {0: "", 1: "3"}[len(arr.shape[1:])]
+        # ncmp = {0: "", 1: "3"}[len(arr.shape[1:])]
+        ncmp = 1 if arr.ndim == 1 else arr.shape[1]
         typ = {np.dtype("float64"): "Float64",}[arr.dtype]
         offset += nbytes
         nbytes += (4 + arr.nbytes)
@@ -49,15 +62,23 @@ def write_particle_vtk(fname, vom, function, coordinates=None):
 """.encode())
         offset += write_array_descriptor(f, "Coordinates", coordinates, offset)
         f.write(b"</Points>")
-        f.write(b"""<PointData Vectors="Particles">""")
-        offset += write_array_descriptor(f, "Particles", dat, offset)
+
+        # Use vector field as default vector attribute used for glyphs + vector operations
+        vectors_attr = next(
+        (name for name, arr in fields if arr.ndim > 1 and arr.shape[1] == 3),
+            ""
+        )
+        f.write(f"""<PointData Vectors="{vectors_attr}">""".encode())
+        for name, arr in fields:
+            offset += write_array_descriptor(f, name, arr, offset)
         f.write(b"""</PointData>
 </Piece>
 </UnstructuredGrid>
 <AppendedData encoding="raw">
 _""")
         write_array(f, coordinates)
-        write_array(f, dat)
+        for _, arr in fields:
+            write_array(f, arr)
         f.write(b"""</AppendedData>
 </VTKFile>""")
 
@@ -109,7 +130,10 @@ y0 = c[1] + r*np.sin(theta)
 q0 = np.column_stack([x0, y0])
 
 particle_vom = VertexOnlyMesh(mesh, q0)
-P0DG = VectorFunctionSpace(particle_vom, "DG", 0)
+
+P0DG_dim2 = VectorFunctionSpace(particle_vom, "DG", 0) # vector DG0 field
+P0DG_dim1 = FunctionSpace(particle_vom, "DG", 0) # scalar DG0 field
+
 print("Initial particle positions: ", particle_vom.coordinates.dat.data_ro)
 
 # We also need function spaces, which is achieved by associating the
@@ -228,15 +252,18 @@ Path("particles").mkdir(exist_ok=True)
 particle_file_base = "particles/particles_{}.vtu"
 particle_file_count = 0
 
-u_at_points = Function(P0DG)
+u_at_points = Function(P0DG_dim2, name="Particle_Velocity")
 u_at_points.interpolate(z.subfunctions[0])
 # -
+
+point_ids = Function(P0DG_dim1, name="Particle_IDs")
+point_ids.dat.data_wo[:] = particle_vom.cell_global_index
 
 for timestep in range(0, timesteps):
     # Write output:
     if timestep % output_frequency == 0:
         output_file.write(*z.subfunctions, T)
-        write_particle_vtk(particle_file_base.format(particle_file_count), particle_vom, u_at_points)
+        write_particle_vtk(particle_file_base.format(particle_file_count), particle_vom, [u_at_points, point_ids])
         particle_file_count += 1
 
     dt = t_adapt.update_timestep()
@@ -271,6 +298,7 @@ for timestep in range(0, timesteps):
 
     # Calculate L2-norm of change in temperature:
     maxchange = sqrt(assemble((T - energy_solver.T_old)**2 * dx))
+    log(f"step {timestep}: t = {time:.4e}, dt = {float(delta_t):.3e}, maxchange = {maxchange:.3e}")
 
     # Leave if steady-state has been achieved:
     if maxchange < steady_state_tolerance:
