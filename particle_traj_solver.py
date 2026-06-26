@@ -58,10 +58,11 @@ class ParticleTrajectorySolver():
 
         while t_start < t_end - 1e-12:
             self.outer_loop_iter += 1
-            self.logger.outer_loop(self.outer_loop_iter, t_start, self.stepper.dt, t_end, self.num_particles)
+            dt_step = min(self.stepper.dt, t_end - t_start)
+            self.logger.outer_loop(self.outer_loop_iter, t_start, dt_step, t_end, self.num_particles)
             
-            # Run the inner time step loop
-            boundary_particles_current = self._run_inner_loop()
+            # Run the inner loop to deal with crossings
+            boundary_particles_current = self._run_inner_loop(dt_step)
 
             # Recompute physical coordinates
             new_phys_coords = assemble(
@@ -96,7 +97,7 @@ class ParticleTrajectorySolver():
                 # Update the VOM's coordinates (topology stays the same)
                 self.particle_vom.coordinates.dat.data_wo[:] = new_phys_coords.dat.data_ro
 
-            t_start += self.stepper.dt
+            t_start += dt_step
 
             if self.plotter:
                 self.plotter.update(self.particle_vom)
@@ -107,11 +108,11 @@ class ParticleTrajectorySolver():
         return t_start, particle_ids
 
         
-    def _run_inner_loop(self):
+    def _run_inner_loop(self, dt_step):
         self.inner_loop_iter = 0
         self.particles_inner_loop_iter = np.zeros(self.num_particles, dtype=int)
 
-        dt_remaining = np.full(self.num_particles, self.stepper.dt)
+        dt_remaining = np.full(self.num_particles, dt_step)
         new_ref_pos = self.particle_vom.reference_coordinates.dat.data_ro.copy()
         boundary_particles_current = []
 

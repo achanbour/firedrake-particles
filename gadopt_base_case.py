@@ -230,9 +230,10 @@ stokes_solver = StokesSolver(
     transpose_nullspace=Z_nullspace,
 )
 
-# XXX this doesn't re-interpolate u when the VOM moves (or time changes...?)
-stepper = ForwardEulerStepper(particle_vom, 0.0, u) # can supply z.subfunctions[0]
-# stepper = ForwardEulerStepper(particle_vom, 0.0, u_fn)
+# stepper = ForwardEulerStepper(particle_vom, np.inf, u)
+dt_p = 1e-4
+stepper = ForwardEulerStepper(particle_vom, dt_p, u)
+
 cell_crossing_solver = BisectionSolver()
 particle_traj_solver_params = ParticleTrajectorySolverParams(
   bary_tol=1e-9,
@@ -268,7 +269,8 @@ for timestep in range(0, timesteps):
 
     dt = t_adapt.update_timestep()
     time_start = time
-    stepper._dt = dt
+    # particle dt set to PDE window: dt_p = dt_pde = time - time_start?
+    # stepper._dt = dt
     time += dt
 
     # Solve Stokes sytem: updates u given T
