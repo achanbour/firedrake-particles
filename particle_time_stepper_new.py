@@ -139,6 +139,14 @@ class ParticleTimeStepper(ABC):
         self._step_callable_is_current = False
 
 
+    def prepare_substep(self):
+        pass
+
+
+    def finalize_substep(self):
+        pass
+
+
     def step(self):
         self._check_step_callable_is_current()
         result = None
@@ -157,9 +165,7 @@ class ParticleTimeStepper(ABC):
 
 class ForwardEulerStepper(ParticleTimeStepper):
     """
-    Advance particles using the explicit Euler update:
-
-    X(t + dt) = X(t) + J^-1 * v * dt
+    Advance particles using the Forward Euler update.
     """
 
     def __init__(self, particle_vom, dt, v):
@@ -179,6 +185,7 @@ class ForwardEulerStepper(ParticleTimeStepper):
 
 
     def _build_update_expr(self):
+        """X(t + dt) = X(t) + J^-1 * v * dt"""
         self._stages = [
             Stage(None, self._X + self._dt_fn * self._v_ref, relocate=False)
         ]
@@ -202,25 +209,59 @@ class StormerVerletStepper(ParticleTimeStepper):
             raise TypeError("Expected acceleration to be supplied as a UFL expression.")
         
         self._a = a # physical acceleration -grad(phi)
-        self._a_particles = self._sample_on_particles(self._a)
+
+        # -- record acceleration at both the start and end of a step (needed for the velocity update)
+        self._a_start = Function(
+            VectorFunctionSpace(particle_vom, "DG", 0),
+            name="particle-acceleration-start"
+        )
+        self._a_end = Function(
+            VectorFunctionSpace(particle_vom, "DG", 0),
+            name="particle-acceleration-end"
+        )
 
         # -- velocity is an evolving state
-        self._v = Function(VectorFunctionSpace(particle_vom, "DG", 0), name="particle-velocity")
-        self._fields.append(self._V)
-        self._v_ref = self._v_pullback(self._v) # needed for position drift
+        self._v = Function(
+            VectorFunctionSpace(particle_vom, "DG", 0), 
+            name="particle-velocity"
+        )
+
+        self._fields.append(self._a_start)
+        self._fields.append(self._a_end)
+        self._fields.append(self._v)
+
+        # -- for position update
+        self._v_half = self._v + 0.5 * self._dt_fn * self._a_start
+        self._v_half_ref = self._v_pullback(self._v_half)
+
+        self._v_update = self._v + 0.5 * self._dt_fn * (self._a_start + self._a_end)
+        self._v_update_callable = partial(
+            assemble,
+            interpolate(self._v_update, self._v.function_space())
+        )
 
         self._build_update_expr()
         self._build_step_callable()
 
-    
+    # XXX: Updates position only
     def _build_update_expr(self):
-        half_kick = self._v + self._dt_fn / 2 * self._a_particles # in physical space
-        full_drift = self._X + self.dt_fn * self._v_ref # in reference space
+        """X(t + dt) = X(t) + dt * J^-1 * (v + dt/2 * a_start)"""
         self._stages = [
-            Stage(self._v, half_kick, relocate=False), # V^{n+1/2} using a(x^n)
-            Stage(self._X, full_drift, relocate=True), # X^{n+1} using V_ref^{n+1/2}
-            Stage(self._v, half_kick, relocate=False) # V^{n+1} using a(x^{n+1})
+            Stage(None, self._X + self._dt_fn * self._v_half_ref, relocate=False) # X^{n+1} using V_ref^{n+1/2}
         ]
+    
+    def prepare_substep(self):
+        # Cache a(x_n) while VOM still holds x_n
+        self._a_start.assign(
+            assemble(interpolate(self._a, self._a_start.function_space()))
+        )
+    
+    def finalize_substep(self):
+        # Called after update_ref_view has committed the new positions into the VOM
+        # -- Do a full velocity update
+        self._a_end = assemble(interpolate(self._a, self._a_start.function_space()))
+        self._v.assign(self._v_update_callable())
+
 
     
     

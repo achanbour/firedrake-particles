@@ -129,6 +129,9 @@ class ParticleTrajectorySolver():
             self.stepper.dt_fn.dat.zero()
             self.stepper.dt_fn.dat.data_wo[particles_with_dt_remaining_idxs] = dt_remaining[particles_with_dt_remaining_idxs]
 
+            # -- Capture initial state
+            self.stepper.prepare_substep()
+
             # Compute candidate reference positions by executing a full step
             candidate_ref_pos = self.stepper.step()
             candidate_bary_coords = self.ref_cell.compute_barycentric_coordinates(candidate_ref_pos.dat.data_ro)
@@ -245,6 +248,9 @@ class ParticleTrajectorySolver():
 
             # Update the particle VOM
             self.particle_vom_updater.update_ref_view(new_parent_cells, new_ref_pos)
+
+            # -- Finalise the substep
+            self.stepper.finalize_substep()
         else:
             breakpoint()
             particles_not_resolved_idxs = np.where(dt_remaining > self.eff_time_tol)[0]
