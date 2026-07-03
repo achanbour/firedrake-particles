@@ -166,7 +166,7 @@ class ForwardEulerStepper(ParticleTimeStepper):
         super().__init__(particle_vom, dt)
 
         if not isinstance(v, Expr):
-            raise TypeError("Expected velocity to be a UFL expression.")
+            raise TypeError("Expected velocity to be supplied as a UFL expression.")
         
         self._v = v    
         if extract_unique_domain(v) is self.particle_vom:
@@ -180,7 +180,7 @@ class ForwardEulerStepper(ParticleTimeStepper):
 
     def _build_update_expr(self):
         self._stages = [
-            Stage(None, self._X + self._v_ref * self._dt_fn, relocate=False)
+            Stage(None, self._X + self._dt_fn * self._v_ref, relocate=False)
         ]
     
     @property
@@ -191,8 +191,43 @@ class ForwardEulerStepper(ParticleTimeStepper):
     def v_ref(self):
         return assemble(interpolate(self._v_ref, self.particle_vom.coordinates.function_space()))
     
+    
+class StormerVerletStepper(ParticleTimeStepper):
+    """Advance particles using the 3 stage Stormer-Verlet update."""
+
+    def __init__(self, particle_vom, dt, a):
+        super().__init__(particle_vom, dt)
+    
+        if not isinstance(a, Expr):
+            raise TypeError("Expected acceleration to be supplied as a UFL expression.")
+        
+        self._a = a # physical acceleration -grad(phi)
+        self._a_particles = self._sample_on_particles(self._a)
+
+        # -- velocity is an evolving state
+        self._v = Function(VectorFunctionSpace(particle_vom, "DG", 0), name="particle-velocity")
+        self._fields.append(self._V)
+        self._v_ref = self._v_pullback(self._v) # needed for position drift
+
+        self._build_update_expr()
+        self._build_step_callable()
 
     
+    def _build_update_expr(self):
+        half_kick = self._v + self._dt_fn / 2 * self._a_particles # in physical space
+        full_drift = self._X + self.dt_fn * self._v_ref # in reference space
+        self._stages = [
+            Stage(self._v, half_kick, relocate=False), # V^{n+1/2} using a(x^n)
+            Stage(self._X, full_drift, relocate=True), # X^{n+1} using V_ref^{n+1/2}
+            Stage(self._v, half_kick, relocate=False) # V^{n+1} using a(x^{n+1})
+        ]
+
+    
+    
+
+
+
+
 
     
 

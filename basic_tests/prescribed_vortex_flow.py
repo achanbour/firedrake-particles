@@ -2,8 +2,11 @@ from firedrake import *
 import numpy as np
 from pathlib import Path
 
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
 from particle_crossing_solver import BisectionSolver
-from particle_time_stepper import ForwardEulerStepper
+from particle_time_stepper_new import ForwardEulerStepper
 from particle_traj_solver import ParticleTrajectorySolver, ParticleTrajectorySolverParams
 
 # ---- particle VTK writers ---
