@@ -158,7 +158,8 @@ class ParticleTrajectorySolver():
                                             {
                                                 "X_new": new_ref_pos[particles_passed_global_idxs]
                                             },
-                                            indices=particles_passed_global_idxs, level="info")
+                                            indices=particles_passed_global_idxs, 
+                                            level="info")
             
             parent_cells = self.particle_vom.topology.cell_parent_cell_list.copy()
             new_parent_cells = parent_cells.copy()
@@ -183,9 +184,10 @@ class ParticleTrajectorySolver():
                                                 "dt_remaining": dt_remaining[particles_failed_global_idxs],
                                                 "t_cross": t_cross,
                                                 "bary_coords_cross": bary_cross,
-                                                "X_cross": X_cross 
+                                                "X_cross": X_cross,
                                             }, 
-                                            indices=particles_failed_global_idxs)
+                                            indices=particles_failed_global_idxs,
+                                            level="info")
 
                 # Determine which edge each particle crossed
                 crossed_edge_idxs = np.full(len(particles_with_dt_remaining_idxs), None, dtype=object)

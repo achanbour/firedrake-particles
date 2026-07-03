@@ -44,7 +44,6 @@ class ParticleTimeStepper(ABC):
         # Register fields owned by stepper
         self._fields = [self._dt_fn] 
 
-        
     @abstractmethod
     def _build_update_expr(self):
         """Return the UFL update expression."""
@@ -114,7 +113,7 @@ class ParticleTimeStepper(ABC):
 
 class ForwardEulerStepper(ParticleTimeStepper):
     """
-    Advance particles by Forward Euler:
+    Advance particles using the explicit Euler update:
 
     X(t + dt) = X(t) + J^-1 * v * dt
 
@@ -168,3 +167,10 @@ class ForwardEulerStepper(ParticleTimeStepper):
     @property
     def v_ref(self):
         return assemble(interpolate(self._v_ref, self.particle_vom.coordinates.function_space()))
+    
+
+class StormerVerletStepper(ParticleTimeStepper):
+    """
+    Advance particles using the Stormer-Verlet update
+    """
+    pass
