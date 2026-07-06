@@ -9,55 +9,7 @@ from particle_crossing_solver import BisectionSolver
 from particle_time_stepper_new import ForwardEulerStepper
 from particle_traj_solver import ParticleTrajectorySolver, ParticleTrajectorySolverParams
 
-# ---- particle VTK writers ---
-def write_particle_vtk(fname, vom, function, coordinates=None):
-    if coordinates is None:
-        coordinates = vom.coordinates.dat.data_ro
-    coordinates = np.pad(coordinates, ((0, 0), (0, 1)))   # (N,2)->(N,3): add z=0 column only
-    dat = np.pad(function.dat.data_ro, ((0, 0), (0, 1)))
-    num_points = coordinates.shape[0]
-
-    def descr(f, name, arr, offset):
-        ncmp = {0: "", 1: "3"}[len(arr.shape[1:])]
-        typ = {np.dtype("float64"): "Float64"}[arr.dtype]
-        f.write(f'<DataArray Name="{name}" type="{typ}" NumberOfComponents="{ncmp}" format="appended" offset="{offset}" />'.encode())
-        return 4 + arr.nbytes
-
-    def warr(f, arr):
-        np.uint32(arr.nbytes).tofile(f); arr.tofile(f)
-
-    with open(fname, "wb") as f:
-        off = 0
-        f.write(f'''<?xml version="1.0" ?>
-<VTKFile type="UnstructuredGrid" version="2.2" byte_order="LittleEndian" header_type="UInt32">
-<UnstructuredGrid>
-<Piece NumberOfPoints="{num_points}" NumberOfCells="0">
-<Cells>
-<DataArray type="Int32" Name="connectivity" format="ascii"></DataArray>
-<DataArray type="Int32" Name="offsets" format="ascii"></DataArray>
-<DataArray type="UInt8" Name="types" format="ascii"></DataArray>
-</Cells>
-<Points>
-'''.encode())
-        off += descr(f, "Coordinates", coordinates, off)
-        f.write(b"</Points><PointData Vectors=\"Velocity\">")
-        off += descr(f, "Velocity", dat, off)
-        f.write(b'''</PointData>
-</Piece>
-</UnstructuredGrid>
-<AppendedData encoding="raw">
-_''')
-        warr(f, coordinates); warr(f, dat)
-        f.write(b"</AppendedData>\n</VTKFile>")
-
-
-def write_pvd(fname, tmpl, count):
-    with open(fname, "w") as f:
-        f.write('<?xml version="1.0" ?>\n<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n<Collection>\n')
-        for i in range(count):
-            f.write(f'<DataSet timestep="{i}" file="{tmpl.format(i)}" />\n')
-        f.write("</Collection></VTKFile>")
-
+from vtk_output import write_particle_vtk, write_pvd
 
 mesh = UnitSquareMesh(40, 40, quadrilateral=False)
 V = VectorFunctionSpace(mesh, "CG", 2) # velocity FS

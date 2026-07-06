@@ -139,7 +139,7 @@ class ParticleTimeStepper(ABC):
         self._step_callable_is_current = False
 
 
-    def prepare_substep(self):
+    def begin_substep(self):
         pass
 
 

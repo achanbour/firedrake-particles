@@ -8,6 +8,8 @@ from particle_logger import ParticleLogger
 from exceptions import ParticleCrossingLoopNotConverged
 from particle_plotter import ParticlePlotterProtocol, ParticlePlotter
 
+from vtk_output import write_particle_vtk, write_pvd
+
 @dataclass
 class ParticleTrajectorySolverParams:
     bary_tol: float
@@ -18,7 +20,7 @@ class ParticleTrajectorySolverParams:
     plot: bool=False
 
 class ParticleTrajectorySolver():
-    def __init__(self, stepper, cell_crossing_solver, params: ParticleTrajectorySolverParams, plotter: ParticlePlotterProtocol = None):
+    def __init__(self, stepper, cell_crossing_solver, params: ParticleTrajectorySolverParams, plotter: ParticlePlotterProtocol = None, vtk_dir=None, vtk_base=None):
         # velocity could be a function of time so may need to pass time params
 
         self.stepper = stepper
@@ -44,6 +46,10 @@ class ParticleTrajectorySolver():
             self.plotter = ParticlePlotter()
         else:
             self.plotter = None
+        
+        self._vtk_dir = vtk_dir
+        self._vtk_frame = 0
+        self._vtk_base = vtk_base
 
     @property
     def num_particles(self):
@@ -97,6 +103,10 @@ class ParticleTrajectorySolver():
                 # Update the VOM's coordinates (topology stays the same)
                 self.particle_vom.coordinates.dat.data_wo[:] = new_phys_coords.dat.data_ro
 
+            if self._vtk_dir is not None:
+                write_particle_vtk(self._vtk_base.format(self._vtk_frame), self.particle_vom, self.stepper.v)
+                self._vtk_frame += 1
+
             t_start += dt_step
 
             if self.plotter:
@@ -104,6 +114,11 @@ class ParticleTrajectorySolver():
         
         if self.plotter:
             self.plotter.close()
+        
+        if self._vtk_dir is not None:
+            write_pvd("particles.pvd",
+                      self._vtk_base,
+                      self._vtk_frame)
             
         return t_start, particle_ids
 
