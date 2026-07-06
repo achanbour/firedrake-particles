@@ -235,6 +235,8 @@ class StormerVerletStepper(ParticleTimeStepper):
         self._v_half_ref = self._v_pullback(self._v_half)
 
         self._v_update = self._v + 0.5 * self._dt_fn * (self._a_start + self._a_end)
+
+        # XXX: has to be part of step callables?
         self._v_update_callable = partial(
             assemble,
             interpolate(self._v_update, self._v.function_space())
@@ -250,8 +252,8 @@ class StormerVerletStepper(ParticleTimeStepper):
             Stage(None, self._X + self._dt_fn * self._v_half_ref, relocate=False) # X^{n+1} using V_ref^{n+1/2}
         ]
     
-    def prepare_substep(self):
-        # Cache a(x_n) while VOM still holds x_n
+    def begin_substep(self):
+        # Cache a(x_n) when VOM has current state x_n
         self._a_start.assign(
             assemble(interpolate(self._a, self._a_start.function_space()))
         )
@@ -259,8 +261,19 @@ class StormerVerletStepper(ParticleTimeStepper):
     def finalize_substep(self):
         # Called after update_ref_view has committed the new positions into the VOM
         # -- Do a full velocity update
-        self._a_end = assemble(interpolate(self._a, self._a_start.function_space()))
+        self._a_end.assign(
+            assemble(interpolate(self._a, self._a_end.function_space()))
+        )                    
         self._v.assign(self._v_update_callable())
+    
+    @property
+    def v(self):
+        return self._v
+    
+    @property
+    def v_ref(self):
+        # return the reference space velocity used for the position drift step
+        return assemble(interpolate(self._v_half_ref, self.particle_vom.coordinates.function_space()))
 
 
     

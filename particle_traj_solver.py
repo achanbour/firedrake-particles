@@ -87,7 +87,7 @@ class ParticleTrajectorySolver():
                 reorder_map = self.particle_vom_updater.rebuild_vom(absorbed_vom_indices=boundary_particles_current, new_coords=new_phys_coords)
 
                 # Invalidate parloops as Function Spaces have been redefined
-                # TODO: if we preserve the VOM topology, then we can preserve Functions and Function Spaces defined on it.
+                # XXX: if we preserve the VOM topology, then we can preserve Functions and Function Spaces defined on it.
                 # For now, rebuild all fields stored in the stepper.
                 self.stepper.invalidate()
 
@@ -130,7 +130,7 @@ class ParticleTrajectorySolver():
             self.stepper.dt_fn.dat.data_wo[particles_with_dt_remaining_idxs] = dt_remaining[particles_with_dt_remaining_idxs]
 
             # -- Capture initial state
-            self.stepper.prepare_substep()
+            self.stepper.begin_substep()
 
             # Compute candidate reference positions by executing a full step
             candidate_ref_pos = self.stepper.step()
@@ -149,8 +149,15 @@ class ParticleTrajectorySolver():
             
             self.logger.inner_loop(self.inner_loop_iter, particles_with_dt_remaining_idxs, particles_passed_global_idxs, particles_failed_global_idxs)
 
+            # record which dt was used to advance the particles
+            dt_used = np.zeros(self.num_particles, dtype=float)
+
             # Process passed particles
             if len(particles_passed_global_idxs) > 0:
+                dt_used[particles_passed_global_idxs] = dt_remaining[particles_passed_global_idxs]
+                dt_remaining[particles_passed_global_idxs] = 0
+                new_ref_pos[particles_passed_global_idxs] = candidate_ref_pos.dat.data_ro[particles_passed_global_idxs]
+
                 # Set dt_remaining to 0
                 dt_remaining[particles_passed_global_idxs] = 0
 
@@ -178,6 +185,7 @@ class ParticleTrajectorySolver():
                     bary_tol=self._params.bary_tol,
                     time_tol=self.eff_time_tol,
                 )
+                dt_used[particles_failed_global_idxs] = t_cross
 
                 # Decrement dt_remaining by t_cross
                 dt_remaining[particles_failed_global_idxs] -= t_cross
@@ -200,7 +208,7 @@ class ParticleTrajectorySolver():
                     crossed_edge = int(np.argmin(abs(bary_cross[i])))
                     crossed_edge_normal = self.ref_cell.compute_reference_normal(1, crossed_edge)
                     
-                    # NOTE: stepper._v_ref has already been evaluated in stepper.step()
+                    # XXX: stepper._v_ref has already been evaluated in stepper.step()
                     # so either re-assemble as done here or stash and reuse the results from the previous evaluation
                     v_ref = self.stepper.v_ref.dat.data_ro[particles_failed_global_idxs[i]]
 
@@ -248,8 +256,10 @@ class ParticleTrajectorySolver():
 
             # Update the particle VOM
             self.particle_vom_updater.update_ref_view(new_parent_cells, new_ref_pos)
-
-            # -- Finalise the substep
+            
+            # Change dt to match the step consumed by each particle
+            self.stepper.dt_fn.dat.zero()
+            self.stepper.dt_fn.dat.data_wo[particles_with_dt_remaining_idxs] = dt_used[particles_with_dt_remaining_idxs]
             self.stepper.finalize_substep()
         else:
             breakpoint()
