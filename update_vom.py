@@ -276,10 +276,11 @@ class VertexOnlyMeshUpdater:
         self.vom._saved_coordinate_dat_version = self.vom.coordinates.dat.dat_version
 
 
-    def rebuild_vom(self, absorbed_vom_indices, new_coords=None):
+    def rebuild_vom(self, absorbed_vom_indices, new_coords=None, migrate_functions=True):
         from firedrake.mesh import (
             _parent_mesh_embedding,
-            _swarm_original_ordering_preserve,
+            # _swarm_original_ordering_preserve,
+            _dmswarm_create
         )
         from firedrake.function import Function
         from firedrake.utils import IntType
@@ -299,6 +300,7 @@ class VertexOnlyMeshUpdater:
             new_coords = new_coords.dat.data_ro
 
             # Re-embedd all points using their updated coordinates (the resulting arrays are rank-local)
+            # XXX: With `redundant=False` each rank embedds its own supplied points and gets back arrays for those same points, in the same order
             tolerance = self.parent_mesh.tolerance # default
             (
                 coords_local,
@@ -313,7 +315,7 @@ class VertexOnlyMeshUpdater:
                 parent_mesh=self.parent_mesh,
                 coords=new_coords,
                 tolerance=tolerance,
-                redundant=False, # each rank embedds its own local coordinates
+                redundant=False,
                 exclude_halos=False,
                 remove_missing_points=False
             )
@@ -357,20 +359,41 @@ class VertexOnlyMeshUpdater:
 
         # Build the IO swarm capturing the current VOM state
         # NOTE: If we rewrite the IO VOM at every rebuild, then how do we maintain a ref. to the very first IO VOM?
-        new_io_swarm = _swarm_original_ordering_preserve(
-            comm=comm,
-            swarm=swarm,
-            original_ordering_coords_local=new_coords if new_coords is not None else coords_local,
-            plex_parent_cell_nums_local=plex_parent_cell_nums_local,
-            global_idxs_local=global_idxs_local,
-            reference_coords_local=reference_coords_local,
-            parent_cell_nums_local=parent_cell_nums_local,
-            ranks_local=owned_ranks_local,
-            input_ranks_local=input_ranks_local,
-            input_idxs_local=input_coords_idxs_local,
-            extruded=self.parent_mesh.extruded,
-            layers=getattr(self.parent_mesh, "layers", None)
+        # new_io_swarm = _swarm_original_ordering_preserve(
+        #     comm=comm,
+        #     swarm=swarm,
+        #     original_ordering_coords_local=new_coords if new_coords is not None else coords_local,
+        #     plex_parent_cell_nums_local=plex_parent_cell_nums_local,
+        #     global_idxs_local=global_idxs_local,
+        #     reference_coords_local=reference_coords_local,
+        #     parent_cell_nums_local=parent_cell_nums_local,
+        #     ranks_local=owned_ranks_local,
+        #     input_ranks_local=input_ranks_local,
+        #     input_idxs_local=input_coords_idxs_local,
+        #     extruded=self.parent_mesh.extruded,
+        #     layers=getattr(self.parent_mesh, "layers", None)
+        # )
+
+        # Create a snapshot around current VOM with rank-local arrays
+        new_io_swarm = _dmswarm_create(
+            [],
+            comm,
+            swarm,
+            new_coords if new_coords is not None else coords_local,
+            plex_parent_cell_nums_local,
+            global_idxs_local,
+            reference_coords_local,
+            parent_cell_nums_local,
+            owned_ranks_local,
+            input_ranks_local,
+            input_coords_idxs_local,
+            None, # base_parent_cell_nums (non-extruded)
+            None, # extrusion_heights
+            self.parent_mesh.extruded,
+            tdim,
+            gdim,
         )
+
         # Remove halos from the IO swarm pointSF (describes parallel distribution over ranks)
         # roots = locally owned points, leaves = ghost/halo points that are copies of roots owned by other ranks
         # This produces a directed graph from leaves -> roots across ranks
@@ -541,5 +564,28 @@ class VertexOnlyMeshUpdater:
         perm_new = topology._dm_renumbering.getIndices()[:n_local]
         inputindex = swarm.getField("inputindex").ravel()[:n_local].copy()
         swarm.restoreField("inputindex")
+
+        if migrate_functions:
+            self._rebuild_functions()
+
         return inputindex[perm_new]
+
+
+    def _rebuild_functions(self):
+        """Eagerly migrate every live Function on the VOM to the new topology."""
+        topology = self.vom._topology_dm
+        function_registry = getattr(topology, "_live_functions", None)
+
+        if function_registry is None:
+            return
+        
+        # Sweep through registered functions in creation order
+        # -- deterministic and identical accross all MPI ranks which is needed for
+        # consistent migration (using collective SF bcast)
+        for key in sorted(function_registry.keys()):
+            f = function_registry.get(key)
+            if f is not None:
+                f._match_mesh_topology_version()
+
+
 
