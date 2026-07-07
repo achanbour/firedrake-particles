@@ -527,7 +527,7 @@ class VertexOnlyMeshUpdater:
         coords_fs = self.vom._coordinates.function_space()
         ref_coords_fs = self.vom.reference_coordinates.function_space().topological
         for fs in [coords_fs, ref_coords_fs]:
-            fs._refresh_shared_data()
+            fs.refresh_shared_data()
 
         # Rebuild coordinate data using fresh sections
         coords_data = dmcommon.reordered_coords(swarm, coords_fs.dm.getDefaultSection(),

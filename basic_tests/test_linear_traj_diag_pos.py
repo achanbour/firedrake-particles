@@ -4,12 +4,12 @@ import numpy as np
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from particle_time_stepper import ForwardEulerStepper
+from particle_time_stepper_new import ForwardEulerStepper
 from particle_crossing_solver import BisectionSolver, BisectionSolverParams
 from particle_traj_solver import ParticleTrajectorySolver, ParticleTrajectorySolverParams
 
 """
-Linear particle trajectory using constant velocity (identical for all particles) and initial positions on the mesh diagonal.
+Linear particle trajectory using constant velocity and starting positions on the mesh diagonal.
 """
 
 # Define the parent mesh
@@ -40,7 +40,7 @@ print("Initial particle velocities: ", v0_vom)
 # dt=0.1, t_end=7.6: 2 particles removed
 
 t_start = 0
-t_end = 2.7
+t_end = 10
 dt = 0.1
 stepper = ForwardEulerStepper(particle_vom, dt, v)
 
@@ -67,7 +67,7 @@ particle_traj_solver_params = ParticleTrajectorySolverParams(
     abs_time_tol=1e-9,
     rel_time_tol=0,
     max_iters=50,
-    plot=False
+    plot=True
 )
 particle_traj_solver = ParticleTrajectorySolver(stepper, cell_crossing_solver, particle_traj_solver_params)
 

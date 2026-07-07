@@ -5,7 +5,7 @@ import numpy as np
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from particle_time_stepper import ForwardEulerStepper
+from particle_time_stepper_new import ForwardEulerStepper
 from particle_crossing_solver import BisectionSolver, BisectionSolverParams
 from particle_traj_solver import ParticleTrajectorySolver, ParticleTrajectorySolverParams
 
@@ -33,7 +33,7 @@ V = VectorFunctionSpace(particle_vom, "DG", 0, dim=particle_vom.geometric_dimens
 V_io = VectorFunctionSpace(particle_vom.input_ordering, "DG", 0, dim=particle_vom.geometric_dimension)
 v = Function(V)
 v_io = Function(V_io)
-input_velocities = np.random.normal(0.1, 0.5, size=(num_particles,2))
+input_velocities = np.random.normal(0.02, 0.1, size=(num_particles,2))
 v_io.dat.data[:] = input_velocities
 v.interpolate(v_io)
 v0_vom = v.dat.data_ro.copy()
@@ -42,7 +42,7 @@ print("Initial particle velocities: ", v)
 
 # Define solvers
 t_start = 0
-t_end = 1
+t_end = 10
 dt = 0.1
 stepper = ForwardEulerStepper(particle_vom, dt, v)
 
@@ -55,7 +55,7 @@ particle_traj_solver_params = ParticleTrajectorySolverParams(
     abs_time_tol=abs_time_tol,
     rel_time_tol=0,
     max_iters=50,
-    plot=False
+    plot=True
 )
 particle_traj_solver = ParticleTrajectorySolver(stepper, cell_crossing_solver, particle_traj_solver_params)
 
