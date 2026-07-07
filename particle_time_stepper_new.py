@@ -52,7 +52,7 @@ class ParticleTimeStepper(ABC):
         self._dt_fn = Function(FS, name="per-particle-time-step-function")
         
         # Register fields that need to be eagerly rebuilt when the particle VOM changes
-        self._fields = [self._dt_fn]
+        # self._fields = [self._dt_fn]
 
         self._stages = []
         self._stage_callables = []
@@ -86,11 +86,10 @@ class ParticleTimeStepper(ABC):
     # -- Define shared helper methods
     def _sample_on_particles(self, field, tensor=False):
         FS = TensorFunctionSpace(self.particle_vom, "DG", 0) if tensor else VectorFunctionSpace(self.particle_vom, "DG", 0)
-        F = Function(FS)
-        # XXX: FS and F only exist to ensure the FS gets appropriately rebuilt when the VOM changes
-        # This should be removed now that we have the new rebuild mechanism in place.
-        self._fields.append(F)
-        return interpolate(field, F.function_space())
+        # F = Function(FS)
+        # XXX: F only exist to ensure the FS gets appropriately rebuilt when the VOM changes
+        # self._fields.append(F)
+        return interpolate(field, FS)
 
 
     def _v_pullback(self, v):
@@ -124,18 +123,18 @@ class ParticleTimeStepper(ABC):
         if not self._step_callable_is_current:
             self._build_step_callable()
     
-    def _rebuild_fields(self):
-        """Rebuild all the fields owned by the stepper after a VOM mutation"""
-        for f in self._fields:
-            if isinstance(f, Function):
-                f._match_mesh_topology_version()
-            else:
-                raise TypeError("Cannot rebuild a field that is not a Function.")
+    # def _rebuild_fields(self):
+    #     """Rebuild all the fields owned by the stepper after a VOM mutation"""
+    #     for f in self._fields:
+    #         if isinstance(f, Function):
+    #             f._match_mesh_topology_version()
+    #         else:
+    #             raise TypeError("Cannot rebuild a field that is not a Function.")
 
 
     def invalidate(self):
         """Mark all callables as stale."""
-        self._rebuild_fields()
+        # self._rebuild_fields()
         self._step_callable_is_current = False
 
 
@@ -175,8 +174,8 @@ class ForwardEulerStepper(ParticleTimeStepper):
             raise TypeError("Expected velocity to be supplied as a UFL expression.")
         
         self._v = v    
-        if extract_unique_domain(v) is self.particle_vom:
-            self._fields.append(self._v)
+        # if extract_unique_domain(v) is self.particle_vom:
+        #     self._fields.append(self._v)
 
         self._v_ref = self._v_pullback(self._v)
 
@@ -226,9 +225,9 @@ class StormerVerletStepper(ParticleTimeStepper):
             name="particle-velocity"
         )
 
-        self._fields.append(self._a_start)
-        self._fields.append(self._a_end)
-        self._fields.append(self._v)
+        # self._fields.append(self._a_start)
+        # self._fields.append(self._a_end)
+        # self._fields.append(self._v)
 
         # -- for position update
         self._v_half = self._v + 0.5 * self._dt_fn * self._a_start
