@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from functools import partial
 from collections import namedtuple
 
-from firedrake.interpolation import interpolate, get_interpolator
+from firedrake.interpolation import interpolate, Interpolate, get_interpolator
 from firedrake.assemble import assemble
 from firedrake.mesh import VertexOnlyMeshTopology
 from firedrake.function import Function
@@ -13,13 +13,8 @@ from ufl.geometry import SpatialCoordinate
 from ufl.operators import inv
 from ufl.core.expr import Expr
 from ufl.domain import extract_unique_domain
+from ufl.corealg.traversal import unique_expression_dag
 
-
-Stage = namedtuple("Stage", ["target", "expr", "relocate"])
-# target : Function the stage writes into (X or V)
-# expr   : symbolic UFL update, interpolated onto target.function_space()
-# relocate : re-locate particles in the VOM after this stage (needed when a
-#            later stage samples a parent-mesh field at the updated positions)
 
 class ParticleTimeStepper(ABC):
     """
@@ -54,8 +49,9 @@ class ParticleTimeStepper(ABC):
         # Register fields that need to be eagerly rebuilt when the particle VOM changes
         # self._fields = [self._dt_fn]
 
-        self._stages = []
-        self._stage_callables = []
+        self._update_expr = None # single UFL expr for the position update
+        self._step_callable = None
+
         self._step_callable_is_current = False
 
 
@@ -73,6 +69,7 @@ class ParticleTimeStepper(ABC):
         return self._dt
 
     
+
     # NOTE: Using private attributes + property methods enforce a read-only contract on fields owned by the stepper.
     # Re-assigning the fields with a new Function (e.g., stepper.X = ...) would silently invalidate the update expr and associated cached parloops.
     # If we want to allow users to swap out the fields then this should be done via an explicit setter method:
@@ -82,6 +79,8 @@ class ParticleTimeStepper(ABC):
     #     self._dt = val
     #     self.update_expr = self._build_update_expr()
     #     self.invalidate() # call invalidate to force parloops to be rebuilt
+
+
 
     # -- Define shared helper methods
     def _sample_on_particles(self, field, tensor=False):
@@ -108,21 +107,27 @@ class ParticleTimeStepper(ABC):
 
 
     def _build_step_callable(self):
-        self._stage_callables = [
-            (s.target,
-             partial(assemble, interpolate(s.expr, self._X.function_space())),
-             s.relocate
-            )
-            for s in self._stages
-        ]
+        self._step_callable = partial(
+            assemble, interpolate(self._update_expr, self._X.function_space())
+        )
         self._step_callable_is_current = True
     
+
+    def _reset_interpolators(self):
+        """Clear cached Interpolators so they get rebuilt against the current VOM topology.
+        Note that the symbolic expressions remain valid and are therefore untouched."""
+        for node in unique_expression_dag(self._update_expr):
+            if isinstance(node, Interpolate):
+                node.__dict__.pop("_interpolator", None)
+
 
     def _check_step_callable_is_current(self):
         """Rebuild the step callable."""
         if not self._step_callable_is_current:
+            self._reset_interpolators()
             self._build_step_callable()
     
+
     # def _rebuild_fields(self):
     #     """Rebuild all the fields owned by the stepper after a VOM mutation"""
     #     for f in self._fields:
@@ -148,18 +153,7 @@ class ParticleTimeStepper(ABC):
 
     def step(self):
         self._check_step_callable_is_current()
-        result = None
-        for target, call, relocate in self._stage_callables:
-            result = call()
-            if target is not None:
-                # Record states that are not X
-                target.assign(result)
-            if relocate:
-                # TODO
-                # Write the updated positions into the VOM so that next stage can evaluate the required fields
-                # at the new particle positions
-                pass
-        return result
+        return self._step_callable()
 
 
 class ForwardEulerStepper(ParticleTimeStepper):
@@ -185,13 +179,13 @@ class ForwardEulerStepper(ParticleTimeStepper):
 
     def _build_update_expr(self):
         """X(t + dt) = X(t) + J^-1 * v * dt"""
-        self._stages = [
-            Stage(None, self._X + self._dt_fn * self._v_ref, relocate=False)
-        ]
+        self._update_expr = self._X + self._dt_fn * self._v_ref
     
+
     @property
     def v(self):
         return self._v
+
 
     @property
     def v_ref(self):
@@ -235,21 +229,20 @@ class StormerVerletStepper(ParticleTimeStepper):
 
         self._v_update = self._v + 0.5 * self._dt_fn * (self._a_start + self._a_end)
 
-        # XXX: has to be part of step callables?
+        self._build_update_expr()
+        self._build_step_callable()
+
+
+    def _build_step_callable(self):
+        super()._build_step_callable()
         self._v_update_callable = partial(
             assemble,
             interpolate(self._v_update, self._v.function_space())
         )
 
-        self._build_update_expr()
-        self._build_step_callable()
-
-    # XXX: Updates position only
     def _build_update_expr(self):
         """X(t + dt) = X(t) + dt * J^-1 * (v + dt/2 * a_start)"""
-        self._stages = [
-            Stage(None, self._X + self._dt_fn * self._v_half_ref, relocate=False) # X^{n+1} using V_ref^{n+1/2}
-        ]
+        self._update_expr = self._X + self._dt_fn * self._v_half_ref # X^{n+1} using V_ref^{n+1/2}
     
     def begin_substep(self):
         # Cache a(x_n) when VOM has current state x_n
