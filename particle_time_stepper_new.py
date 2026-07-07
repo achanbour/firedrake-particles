@@ -13,7 +13,7 @@ from ufl.geometry import SpatialCoordinate
 from ufl.operators import inv
 from ufl.core.expr import Expr
 from ufl.domain import extract_unique_domain
-from ufl.corealg.traversal import unique_expression_dag
+from ufl.algorithms.analysis import extract_type
 
 
 class ParticleTimeStepper(ABC):
@@ -116,9 +116,8 @@ class ParticleTimeStepper(ABC):
     def _reset_interpolators(self):
         """Clear cached Interpolators so they get rebuilt against the current VOM topology.
         Note that the symbolic expressions remain valid and are therefore untouched."""
-        for node in unique_expression_dag(self._update_expr):
-            if isinstance(node, Interpolate):
-                node.__dict__.pop("_interpolator", None)
+        for node in extract_type(self._update_expr, Interpolate):
+            node.__dict__.pop("_interpolator", None)
 
 
     def _check_step_callable_is_current(self):
