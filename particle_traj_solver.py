@@ -20,7 +20,7 @@ class ParticleTrajectorySolverParams:
     plot: bool=False
 
 class ParticleTrajectorySolver():
-    def __init__(self, stepper, cell_crossing_solver, params: ParticleTrajectorySolverParams, plotter: ParticlePlotterProtocol = None, vtk_dir=None, vtk_base=None):
+    def __init__(self, stepper, cell_crossing_solver, params: ParticleTrajectorySolverParams, plotter: ParticlePlotterProtocol = None, vtk_dir=None, vtk_base=None, monitor=None):
         # velocity could be a function of time so may need to pass time params
 
         self.stepper = stepper
@@ -50,6 +50,8 @@ class ParticleTrajectorySolver():
         self._vtk_dir = vtk_dir
         self._vtk_frame = 0
         self._vtk_base = vtk_base
+
+        self.monitor = monitor
 
     @property
     def num_particles(self):
@@ -108,9 +110,13 @@ class ParticleTrajectorySolver():
                 self._vtk_frame += 1
 
             t_start += dt_step
+            
 
             if self.plotter:
                 self.plotter.update(self.particle_vom)
+
+            if self.monitor is not None:
+                self.monitor(t_start, self)
         
         if self.plotter:
             self.plotter.close()
@@ -119,6 +125,7 @@ class ParticleTrajectorySolver():
             write_pvd("particles.pvd",
                       self._vtk_base,
                       self._vtk_frame)
+    
             
         return t_start, particle_ids
 

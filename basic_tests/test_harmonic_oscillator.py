@@ -16,6 +16,7 @@ This examples solves for the trajectory of particles subject to an external forc
 from a harmonic potential.
 """
 
+
 # Set up
 # -- Define the initial conditions
 num_particles = 10
@@ -44,12 +45,12 @@ accel_fn = Function(Va, name="acceleration").interpolate(accel_expr)
 
 # -- Initial velocity (tangential so that motion is circular)
 init_pos = particle_vom.coordinates.dat.data_ro.copy()
-V0 = omega * np.column_stack([-(init_pos[:, 1] - c[1]), init_pos[:, 0] - c[0]])
+V0 = 0.8 * omega * np.column_stack([-(init_pos[:, 1] - c[1]), init_pos[:, 0] - c[0]])
 
 # Solver setup
 t_start = 0
-dt = 1e-3
-t_end = 0.2 # 200 steps
+t_end = 0.2 # equal to the period T with omega = 10*np.pi
+dt = 1e-3 # 200 steps
 
 stepper = StormerVerletStepper(particle_vom, dt, accel_expr)
 stepper.v.dat.data_wo[:] = V0 # assign initial velocity
@@ -67,10 +68,31 @@ VTKFile("output.pvd").write(accel_fn)
 Path("particles").mkdir(exist_ok=True)
 base = f"particles/particles_{{}}.vtu"
 
-# Save initial frame
-write_particle_vtk(base.format(0), particle_vom, stepper.v)
+def total_energy(pos, vel):
+    return np.sum(
+        0.5*np.sum(vel ** 2, axis=1)
+        + 0.5*omega**2*np.sum((pos - c)**2, axis=1)
+    )
 
-particle_traj_solver = ParticleTrajectorySolver(stepper, cell_crossing_solver, particle_traj_solver_params, vtk_dir="particles", vtk_base=base)
+E_hist, t_hist = [], []
+
+def energy_monitor(t, solver):
+    pos = solver.particle_vom.coordinates.dat.data_ro
+    vel = solver.stepper.v.dat.data_ro
+    E_hist.append(total_energy(pos, vel))
+    t_hist.append(t)
+
+particle_traj_solver = ParticleTrajectorySolver(
+    stepper, 
+    cell_crossing_solver, 
+    particle_traj_solver_params, 
+    vtk_dir="particles", 
+    vtk_base=base,
+    monitor=energy_monitor)
+
+
+write_particle_vtk(base.format(0), particle_vom, stepper.v) # save initial frame
+energy_monitor(t_start, particle_traj_solver) # record initial energy
 
 T_final, surviving_particle_ids = particle_traj_solver.solve(t_start, t_end)
 
@@ -80,16 +102,20 @@ assert len(surviving_particle_ids) == num_particles, "particles were lost at the
 
 print("Final particle positions:", final_pos)
 
-# exact solution: uniform circular motion at angular rate omega
-# same as in steady rigid-body rotation case
-a = omega * t_end
-R = np.array([[np.cos(a), -np.sin(a)], [np.sin(a), np.cos(a)]])
-exact_counterclockwise = c + (init_pos - c) @ R
+# exact solution
+
+# -- uniform circular motion at angular rate omega (same as in steady rigid-body rotation case)
+# a = omega * t_end
+# R = np.array([[np.cos(a), -np.sin(a)], [np.sin(a), np.cos(a)]])
+# exact = c + (init_pos - c) @ R
 # exact_clockwise = c + (init_pos - c) @ R.T
+
+# -- general solution
+exact = c + np.cos(omega*t_end) * (init_pos - c) + np.sin(omega*t_end) / omega * V0
 
 # Check numerical error: second order-accurate implies error in the final solution is O(dt^2)
 # XXX: a more robust check involves halving the time step and checking that the error shrinks by a factor of 4.
-print("max position error vs exact counterclockwise:", np.max(np.linalg.norm(final_pos - exact_counterclockwise, axis=1)))
+print("final max position error:", np.max(np.linalg.norm(final_pos - exact, axis=1)))
 
 
 # Check radius conservation proxy for energy conservation
@@ -98,5 +124,15 @@ r0 = np.linalg.norm(init_pos - c, axis=1)
 rT = np.linalg.norm(final_pos - c, axis=1)
 radius_drift = np.max(np.abs(rT - r0))
 print("max radius drift:", radius_drift)
-assert radius_drift < 1e-2 * r, "radius not conserved)"
+assert radius_drift < 1e-2 * r, "radius not conserved"
+
+# Check that the total energy of the system remains bounded throughout the simulation
+import matplotlib.pyplot as plt
+E = np.array(E_hist)
+plt.plot(t_hist, (E-E[0])/E[0])
+plt.xlabel("t")
+plt.ylabel("(E-E0)/E0")
+plt.savefig("energy_drift.png", dpi=300)
+
+assert np.max(np.abs(E - E[0]))/E[0] < 1e-3, "energy not bounded"
 
