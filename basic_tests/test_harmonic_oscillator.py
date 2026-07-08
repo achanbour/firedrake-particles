@@ -80,21 +80,23 @@ assert len(surviving_particle_ids) == num_particles, "particles were lost at the
 
 print("Final particle positions:", final_pos)
 
-# exact solution: trajectory is circular at angular rate omega
+# exact solution: uniform circular motion at angular rate omega
 # same as in steady rigid-body rotation case
 a = omega * t_end
 R = np.array([[np.cos(a), -np.sin(a)], [np.sin(a), np.cos(a)]])
-exact_counterclockwise = c + (init_pos - c) @ R.T
-# exact_clockwise = c + (init_pos - c) @ R
+exact_counterclockwise = c + (init_pos - c) @ R
+# exact_clockwise = c + (init_pos - c) @ R.T
 
-# Check numerical error
+# Check numerical error: second order-accurate implies error in the final solution is O(dt^2)
+# XXX: a more robust check involves halving the time step and checking that the error shrinks by a factor of 4.
 print("max position error vs exact counterclockwise:", np.max(np.linalg.norm(final_pos - exact_counterclockwise, axis=1)))
-# print("max position error vs exact clockwise:", np.max(np.linalg.norm(final_pos - exact_clockwise, axis=1)))
 
-# Check radius conservation
+
+# Check radius conservation proxy for energy conservation
 # XXX: radius is not preserved exactly, but the drift remains bounded due to the symplecticity of the method
 r0 = np.linalg.norm(init_pos - c, axis=1)
 rT = np.linalg.norm(final_pos - c, axis=1)
 radius_drift = np.max(np.abs(rT - r0))
 print("max radius drift:", radius_drift)
 assert radius_drift < 1e-2 * r, "radius not conserved)"
+
