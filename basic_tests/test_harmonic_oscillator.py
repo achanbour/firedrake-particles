@@ -16,7 +16,6 @@ This examples solves for the trajectory of particles subject to an external forc
 from a harmonic potential.
 """
 
-
 # Set up
 # -- Define the initial conditions
 num_particles = 10
@@ -43,14 +42,14 @@ accel_expr = -omega**2*as_vector([x[0]-c[0], x[1]-c[1]])
 Va = VectorFunctionSpace(parent_mesh, "CG", 1)
 accel_fn = Function(Va, name="acceleration").interpolate(accel_expr)
 
-# -- Initial velocity (tangential so that motion is circular)
+# -- Initial velocity
 init_pos = particle_vom.coordinates.dat.data_ro.copy()
-V0 = 0.8 * omega * np.column_stack([-(init_pos[:, 1] - c[1]), init_pos[:, 0] - c[0]])
+V0 = 0.5 * omega * np.column_stack([-(init_pos[:, 1] - c[1]), init_pos[:, 0] - c[0]]) # 50% slower than for a perfect circular motion
 
 # Solver setup
 t_start = 0
-t_end = 0.2 # equal to the period T with omega = 10*np.pi
-dt = 1e-3 # 200 steps
+t_end = 0.4 # twice the period T with omega = 10*pi
+dt = 1e-3 # 400 steps
 
 stepper = StormerVerletStepper(particle_vom, dt, accel_expr)
 stepper.v.dat.data_wo[:] = V0 # assign initial velocity
@@ -132,7 +131,7 @@ E = np.array(E_hist)
 plt.plot(t_hist, (E-E[0])/E[0])
 plt.xlabel("t")
 plt.ylabel("(E-E0)/E0")
-plt.savefig("energy_drift.png", dpi=300)
+plt.savefig("sv_energy_drift.png", dpi=300)
 
 assert np.max(np.abs(E - E[0]))/E[0] < 1e-3, "energy not bounded"
 
