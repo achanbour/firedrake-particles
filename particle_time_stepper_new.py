@@ -45,9 +45,6 @@ class ParticleTimeStepper(ABC):
         # -- This will be used in the solver inner loop sub-stepping
         FS = FunctionSpace(particle_vom, "DG", 0)
         self._dt_fn = Function(FS, name="per-particle-time-step-function")
-        
-        # Register fields that need to be eagerly rebuilt when the particle VOM changes
-        # self._fields = [self._dt_fn]
 
         self._update_expr = None # single UFL expr for the position update
         self._step_callable = None
@@ -110,6 +107,8 @@ class ParticleTimeStepper(ABC):
         self._step_callable = partial(
             assemble, interpolate(self._update_expr, self._X.function_space())
         )
+        # XXX: cannot use assign() as update_expr contains an operation between 2 non-compatible Functions (scalar x vector)
+        # self._step_callable = lambda : self._X.assign(self._update_expr)
         self._step_callable_is_current = True
     
 
@@ -125,20 +124,11 @@ class ParticleTimeStepper(ABC):
         if not self._step_callable_is_current:
             self._reset_interpolators()
             self._build_step_callable()
-    
 
-    # def _rebuild_fields(self):
-    #     """Rebuild all the fields owned by the stepper after a VOM mutation"""
-    #     for f in self._fields:
-    #         if isinstance(f, Function):
-    #             f._match_mesh_topology_version()
-    #         else:
-    #             raise TypeError("Cannot rebuild a field that is not a Function.")
 
 
     def invalidate(self):
         """Mark all callables as stale."""
-        # self._rebuild_fields()
         self._step_callable_is_current = False
 
 
@@ -166,10 +156,7 @@ class ForwardEulerStepper(ParticleTimeStepper):
         if not isinstance(v, Expr):
             raise TypeError("Expected velocity to be supplied as a UFL expression.")
         
-        self._v = v    
-        # if extract_unique_domain(v) is self.particle_vom:
-        #     self._fields.append(self._v)
-
+        self._v = v
         self._v_ref = self._v_pullback(self._v)
 
         self._build_update_expr()
@@ -181,9 +168,15 @@ class ForwardEulerStepper(ParticleTimeStepper):
         self._update_expr = self._X + self._dt_fn * self._v_ref
     
 
+    # @property
+    # def v(self):
+    #     return self._v
+
     @property
     def v(self):
-        return self._v
+        v_fn = assemble(self._sample_on_particles(self._v))
+        v_fn.rename("particle-velocity")
+        return v_fn
 
 
     @property
@@ -218,10 +211,6 @@ class StormerVerletStepper(ParticleTimeStepper):
             name="particle-velocity"
         )
 
-        # self._fields.append(self._a_start)
-        # self._fields.append(self._a_end)
-        # self._fields.append(self._v)
-
         # -- for position update
         self._v_half = self._v + 0.5 * self._dt_fn * self._a_start
         self._v_half_ref = self._v_pullback(self._v_half)
@@ -250,7 +239,7 @@ class StormerVerletStepper(ParticleTimeStepper):
         )
     
     def finalize_substep(self):
-        # Called after update_ref_view has committed the new positions into the VOM
+        # Called after the crossing solver has resolved all the positions
         # -- Do a full velocity update
         self._a_end.assign(
             assemble(interpolate(self._a, self._a_end.function_space()))

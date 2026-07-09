@@ -180,9 +180,6 @@ class ParticleTrajectorySolver():
                 dt_remaining[particles_passed_global_idxs] = 0
                 new_ref_pos[particles_passed_global_idxs] = candidate_ref_pos.dat.data_ro[particles_passed_global_idxs]
 
-                # Set dt_remaining to 0
-                dt_remaining[particles_passed_global_idxs] = 0
-
                 # Register coordinates
                 new_ref_pos[particles_passed_global_idxs] = candidate_ref_pos.dat.data_ro[particles_passed_global_idxs]
 
