@@ -44,19 +44,18 @@ omega = 10*np.pi
 x = SpatialCoordinate(parent_mesh)
 v_expr = omega * as_vector([-x[1]+c[1], x[0]-c[0]])
 
-V = VectorFunctionSpace(parent_mesh, "CG", 1)
-v_fn = Function(V, name="velocity").interpolate(v_expr)
+# V = VectorFunctionSpace(parent_mesh, "CG", 1)
+# v_fn = Function(V, name="velocity").interpolate(v_expr)
 
-
-VTKFile("output.pvd").write(v_fn)
-Path("particles").mkdir(exist_ok=True)
-base = f"particles/particles_{{}}.vtu"
+# VTKFile("output.pvd").write(v_fn)
+# Path("particles").mkdir(exist_ok=True)
+# base = f"particles/particles_{{}}.vtu"
 
 # Define the solvers
 t_start = 0
 # t_end = 1
 # dt = 0.01
-t_end = 0.4 # equal to the period T with omega = 10*pi
+t_end = 0.2 # equal to the period T with omega = 10*pi
 dt = 1e-3
 stepper = ForwardEulerStepper(particle_vom, dt, v_expr)
 
@@ -81,16 +80,16 @@ particle_traj_solver = ParticleTrajectorySolver(
     stepper, 
     cell_crossing_solver, 
     particle_traj_solver_params,
-    vtk_dir="particles", 
-    vtk_base=base,
+    # vtk_dir="particles", 
+    # vtk_base=base,
     monitor=radius_monitor
     )
 
 # Initial coordinates in VOM order (before solve)
 init_pos = particle_vom.coordinates.dat.data_ro.copy()
 
-write_particle_vtk(base.format(0), particle_vom, stepper.v) # save initial frame
-radius_monitor(t_start, particle_traj_solver) # record initial radius
+# write_particle_vtk(base.format(0), particle_vom, stepper.v) # save initial frame
+# radius_monitor(t_start, particle_traj_solver) # record initial radius
 
 T_final, surviving_particle_ids = particle_traj_solver.solve(t_start, t_end)
 
