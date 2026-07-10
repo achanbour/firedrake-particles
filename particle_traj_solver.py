@@ -1,5 +1,7 @@
 import numpy as np
 from firedrake import *
+from pyop2.mpi import MPI, COMM_WORLD
+from firedrake.utils import IntType
 import warnings
 from dataclasses import dataclass
 
@@ -21,14 +23,14 @@ class ParticleTrajectorySolverParams:
 
 class ParticleTrajectorySolver():
     def __init__(self, stepper, cell_crossing_solver, params: ParticleTrajectorySolverParams, plotter: ParticlePlotterProtocol = None, vtk_dir=None, vtk_base=None, monitor=None):
-        # velocity could be a function of time so may need to pass time params
+        # XXX: velocity could be a function of time so may need to pass time params?
 
         self.stepper = stepper
         self.cell_crossing_solver = cell_crossing_solver
         
         self._params = params
 
-        # If dt changes across time steps, then consider moving this to solve.
+        # XXX: If dt changes across time steps, then consider moving this to solve()
         self.eff_time_tol = max(self._params.abs_time_tol, self._params.rel_time_tol * self.stepper.dt)
 
         self.particle_vom = self.stepper.X.function_space().mesh()
@@ -40,6 +42,7 @@ class ParticleTrajectorySolver():
 
         self.logger = ParticleLogger(level=self._params.log_level)
 
+        # XXX: Move VTK plotting into ParticlePlotter?
         if plotter is not None:
             self.plotter = plotter
         elif params.plot:
@@ -53,12 +56,23 @@ class ParticleTrajectorySolver():
 
         self.monitor = monitor
 
+        # Define a persistent global particle ID
+        # It is locally stored (since dat.data hold one entry per owned particle) but its valued are globally unique.
+        # Its values don't change under VOM rebuilds; only their locations (depending on the rank the particle is currently in) 
+        # and their position in the array according to the current numbering
+        FS_ids = FunctionSpace(self.particle_vom, "DG", 0)
+        self.pids = Function(FS_ids, dtype=IntType, name="particle-ids")
+        n_owned = self.particle_vom.cell_set.size
+        offset = self.particle_vom.comm.scan(n_owned) - n_owned # offset for current rank in global numbering
+        self.pids.dat.data_wo[:] = np.arange(offset, offset + n_owned)
+
+
     @property
     def num_particles(self):
         return self.particle_vom.num_vertices()
 
     def solve(self, t_start, t_end):
-        particle_ids = np.arange(self.particle_vom.num_vertices())
+        # particle_ids = np.arange(self.particle_vom.num_vertices())
         self.outer_loop_iter = 0
         
         if self.plotter:
@@ -89,18 +103,19 @@ class ParticleTrajectorySolver():
             )
 
             # Handle boundary particles and update the particle VOM
-            if len(boundary_particles_current) > 0:
-                # Rebuild the VOM topologically
-                old_particle_ids = particle_ids
-                reorder_map = self.particle_vom_updater.rebuild_vom(absorbed_vom_indices=boundary_particles_current, new_coords=new_phys_coords)
+            # XXX: must be a collective operation
+            n_boundary_global = COMM_WORLD.allreduce(len(boundary_particles_current), op=MPI.SUM)
+            if n_boundary_global > 0:
+                # XXX: all ranks call; ranks with no absorbed particles pass boundary_particles_current=[]
+                self.particle_vom_updater.rebuild_vom(absorbed_vom_indices=boundary_particles_current, new_coords=new_phys_coords)
 
-                # Invalidate parloops as Function Spaces have been redefined
-                # XXX: if we preserve the VOM topology, then we can preserve Functions and Function Spaces defined on it.
-                # For now, rebuild all fields stored in the stepper.
+                # Invalidate the stepper's cached parloops    
                 self.stepper.invalidate()
 
                 # Update particle_ids so that it is always in sync with the latest particle set
-                particle_ids = old_particle_ids[reorder_map]
+                # NOTE: The Function rebuild mechanism (triggered here through dat access) takes care of 
+                # re-arranging the values appropriately consistently with the new VOM numbering
+                # particle_ids = self.pids.dat.data_ro
             else:
                 # Update the VOM's coordinates (topology stays the same)
                 self.particle_vom.coordinates.dat.data_wo[:] = new_phys_coords.dat.data_ro
@@ -127,7 +142,7 @@ class ParticleTrajectorySolver():
                       self._vtk_frame)
     
             
-        return t_start, particle_ids
+        return t_start, self.pids.dat.data_ro.copy()
 
         
     def _run_inner_loop(self, dt_step):

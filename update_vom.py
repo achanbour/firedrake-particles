@@ -559,16 +559,18 @@ class VertexOnlyMeshUpdater:
         # swarm point p          -> old Firedrake cell inputindex[p]
         # old Firedrake cell k   ->  old_particle_ids[k]
         # new_particle_ids[k'] = old_particle_ids[inputindex[perm_new[k']]]
+        
+        # n_local = topology.cell_set.size
+        # perm_new = topology._dm_renumbering.getIndices()[:n_local]
+        # inputindex = swarm.getField("inputindex").ravel()[:n_local].copy()
+        # swarm.restoreField("inputindex")
+        # reorder_map = input_index[perm_new]
 
-        n_local = topology.cell_set.size
-        perm_new = topology._dm_renumbering.getIndices()[:n_local]
-        inputindex = swarm.getField("inputindex").ravel()[:n_local].copy()
-        swarm.restoreField("inputindex")
+        # XXX: Wrong because reorder_map[k'] is an index into the old PID array of rank inputrank[k'] but when called
+        # it is applied to the calling rank's old PID array.
 
         if migrate_functions:
             self._rebuild_functions()
-
-        return inputindex[perm_new]
 
 
     def _rebuild_functions(self):
