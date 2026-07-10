@@ -276,11 +276,10 @@ class VertexOnlyMeshUpdater:
         self.vom._saved_coordinate_dat_version = self.vom.coordinates.dat.dat_version
 
 
-    def rebuild_vom(self, absorbed_vom_indices, new_coords=None, migrate_functions=True):
+    def rebuild_vom(self, absorbed_vom_indices, new_coords=None):
         from firedrake.mesh import (
             _parent_mesh_embedding,
-            # _swarm_original_ordering_preserve,
-            _dmswarm_create
+            _swarm_original_ordering_preserve,
         )
         from firedrake.function import Function
         from firedrake.utils import IntType
@@ -292,7 +291,9 @@ class VertexOnlyMeshUpdater:
         topology = self.vom.topology
         gdim = self.vom.geometric_dimension
         tdim = self.parent_mesh.topological_dimension
-            
+        
+        n_local = topology.cell_set.size
+
         if new_coords is not None:
             if not isinstance(new_coords, Function):
                 raise TypeError("Expected new particle coordinates to be supplied as a Function")
@@ -300,7 +301,6 @@ class VertexOnlyMeshUpdater:
             new_coords = new_coords.dat.data_ro
 
             # Re-embedd all points using their updated coordinates (the resulting arrays are rank-local)
-            # XXX: With `redundant=False` each rank embedds its own supplied points and gets back arrays for those same points, in the same order
             tolerance = self.parent_mesh.tolerance # default
             (
                 coords_local,
@@ -315,13 +315,11 @@ class VertexOnlyMeshUpdater:
                 parent_mesh=self.parent_mesh,
                 coords=new_coords,
                 tolerance=tolerance,
-                redundant=False,
+                redundant=False, # each rank embedds its own local coordinates
                 exclude_halos=False,
                 remove_missing_points=False
             )
         else:
-            # n_local = topology.num_vertices() # this returns owned + halo particles.
-            n_local = topology.cell_set.size # returns owned particles only
             offset = comm.scan(n_local, op=MPI.SUM) - n_local # offset for current rank r (sums n_local across all ranks from 0 through to r)
 
             # Read data from the current VOM, ensuring that it is given to us in VOM order
@@ -346,54 +344,44 @@ class VertexOnlyMeshUpdater:
 
         plex_parent_cell_nums_local = self.parent_mesh.topology.cell_closure[parent_cell_nums_local, -1]
 
-        if len(absorbed_vom_indices) > 0:
-            is_absorbed = np.isin(input_coords_idxs_local, absorbed_vom_indices)
-            n_visible_local = int((parent_cell_nums_local != -1).sum()) - int(is_absorbed.sum())
-        else:
-            n_visible_local = int((parent_cell_nums_local != -1).sum())
 
+        is_absorbed_in_range_local = np.all(np.array(absorbed_vom_indices, dtype=int) < n_local) \
+                                    if len(absorbed_vom_indices) else True
+
+        is_absorbed_in_range_global = comm.allreduce(is_absorbed_in_range_local, op=MPI.LAND)
+        if not is_absorbed_in_range_global:
+            raise ValueError("absorbed VOM index is out of range on some rank")
+
+        # XXX: Only absorb particles that the rank owns
+        # The embedding output arrays contain all particles visible to the rank: BOTH owned and sitting in the halo bound
+        is_absorbed = np.isin(input_coords_idxs_local, absorbed_vom_indices) & (input_ranks_local == comm.rank) # mask
+        visible_mask = (parent_cell_nums_local != -1) & ~is_absorbed
+        n_visible_local = int(visible_mask.sum()) 
+
+        # collective -> every rank contributes its local count and every rank receives the same sum
         n_visible_global = comm.allreduce(n_visible_local, op=MPI.SUM)
+
+        # parallel safe as made over a collectively agreed value
         if n_visible_global == 0:
             raise EmptyVOMError("All particles have left the domain (no points remaining in the VertexOnlyMesh).")
 
 
         # Build the IO swarm capturing the current VOM state
         # NOTE: If we rewrite the IO VOM at every rebuild, then how do we maintain a ref. to the very first IO VOM?
-        # new_io_swarm = _swarm_original_ordering_preserve(
-        #     comm=comm,
-        #     swarm=swarm,
-        #     original_ordering_coords_local=new_coords if new_coords is not None else coords_local,
-        #     plex_parent_cell_nums_local=plex_parent_cell_nums_local,
-        #     global_idxs_local=global_idxs_local,
-        #     reference_coords_local=reference_coords_local,
-        #     parent_cell_nums_local=parent_cell_nums_local,
-        #     ranks_local=owned_ranks_local,
-        #     input_ranks_local=input_ranks_local,
-        #     input_idxs_local=input_coords_idxs_local,
-        #     extruded=self.parent_mesh.extruded,
-        #     layers=getattr(self.parent_mesh, "layers", None)
-        # )
-
-        # Create a snapshot around current VOM with rank-local arrays
-        new_io_swarm = _dmswarm_create(
-            [],
-            comm,
-            swarm,
-            new_coords if new_coords is not None else coords_local,
-            plex_parent_cell_nums_local,
-            global_idxs_local,
-            reference_coords_local,
-            parent_cell_nums_local,
-            owned_ranks_local,
-            input_ranks_local,
-            input_coords_idxs_local,
-            None, # base_parent_cell_nums (non-extruded)
-            None, # extrusion_heights
-            self.parent_mesh.extruded,
-            tdim,
-            gdim,
+        new_io_swarm = _swarm_original_ordering_preserve(
+            comm=comm,
+            swarm=swarm,
+            original_ordering_coords_local=new_coords if new_coords is not None else coords_local,
+            plex_parent_cell_nums_local=plex_parent_cell_nums_local,
+            global_idxs_local=global_idxs_local,
+            reference_coords_local=reference_coords_local,
+            parent_cell_nums_local=parent_cell_nums_local,
+            ranks_local=owned_ranks_local,
+            input_ranks_local=input_ranks_local,
+            input_idxs_local=input_coords_idxs_local,
+            extruded=self.parent_mesh.extruded,
+            layers=getattr(self.parent_mesh, "layers", None)
         )
-
         # Remove halos from the IO swarm pointSF (describes parallel distribution over ranks)
         # roots = locally owned points, leaves = ghost/halo points that are copies of roots owned by other ranks
         # This produces a directed graph from leaves -> roots across ranks
@@ -408,7 +396,7 @@ class VertexOnlyMeshUpdater:
         # Mask any asborbed points as supplied by the user
         # NOTE: absorbed_vom_indices must be rank-local when running in parallel
         if len(absorbed_vom_indices):
-            is_absorbed = np.isin(input_coords_idxs_local, absorbed_vom_indices)
+            is_absorbed = np.isin(input_coords_idxs_local, absorbed_vom_indices) & (input_ranks_local == comm.rank)
             parent_cell_nums_local[is_absorbed] = -1 # overwrite as missing
         
         # This gives us points that have been absorbed and that have been unsuccessfully located in the local mesh partition
@@ -552,42 +540,4 @@ class VertexOnlyMeshUpdater:
         else:
             # This should have been already set to None when the VOM was first constructed
             self.vom.reference_coordinates = None
-
-        # Compute and return the reordering map
-        # After rebuild:
-        # new Firedrake cell k'  ->  swarm point perm_new[k']  (via _dm_renumbering)
-        # swarm point p          -> old Firedrake cell inputindex[p]
-        # old Firedrake cell k   ->  old_particle_ids[k]
-        # new_particle_ids[k'] = old_particle_ids[inputindex[perm_new[k']]]
-        
-        # n_local = topology.cell_set.size
-        # perm_new = topology._dm_renumbering.getIndices()[:n_local]
-        # inputindex = swarm.getField("inputindex").ravel()[:n_local].copy()
-        # swarm.restoreField("inputindex")
-        # reorder_map = input_index[perm_new]
-
-        # XXX: Wrong because reorder_map[k'] is an index into the old PID array of rank inputrank[k'] but when called
-        # it is applied to the calling rank's old PID array.
-
-        if migrate_functions:
-            self._rebuild_functions()
-
-
-    def _rebuild_functions(self):
-        """Eagerly migrate every live Function on the VOM to the new topology."""
-        topology = self.vom._topology_dm
-        function_registry = getattr(topology, "_live_functions", None)
-
-        if function_registry is None:
-            return
-        
-        # Sweep through registered functions in creation order
-        # -- deterministic and identical accross all MPI ranks which is needed for
-        # consistent migration (using collective SF bcast)
-        for key in sorted(function_registry.keys()):
-            f = function_registry.get(key)
-            if f is not None:
-                f._match_mesh_topology_version()
-
-
 
