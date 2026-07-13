@@ -45,9 +45,12 @@ solver = ParticleTrajectorySolver(stepper, BisectionSolver(), params)
 
 # ---- output ----
 VTKFile("output.pvd").write(u_fn)
-Path("particles").mkdir(exist_ok=True)
-base = "particles/particles_{}.vtu"
-count = 0
+
+# Path("particles").mkdir(exist_ok=True)
+# base = "particles/particles_{}.vtu"
+# count = 0
+
+particle_file = VTKFile("particles.pvd")
 
 # Evaluate the velocity field at the particles
 u_at_points = Function(P0DG)
@@ -55,8 +58,9 @@ u_at_points.interpolate(u_fn)
 
 time = 0.0
 for timestep in range(timesteps):
-    write_particle_vtk(base.format(count), particle_vom, u_at_points)
-    count += 1
+    # write_particle_vtk(base.format(count), particle_vom, u_at_points)
+    particle_file.write(u_at_points, time=time)
+    # count += 1
 
     time_start = time
     stepper._dt = dt
@@ -65,4 +69,6 @@ for timestep in range(timesteps):
     solver.solve(time_start, time)
     u_at_points.interpolate(u_fn)
 
-write_pvd("particles.pvd", base, count)
+particle_file.write(u_at_points, time=time) # capture the final state
+
+# write_pvd("particles.pvd", base, count)
