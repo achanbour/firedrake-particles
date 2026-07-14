@@ -56,8 +56,8 @@ class ParticleTrajectorySolver():
 
         self.monitor = monitor
 
-        # Define a persistent global particle ID
-        # It is locally stored (since dat.data hold one entry per owned particle) but its valued are globally unique.
+        # Define persistent global particle IDs
+        # These are locally stored (since dat.data hold one entry per owned particle) but their valued are globally unique.
         # Its values don't change under VOM rebuilds; only their locations (depending on the rank the particle is currently in) 
         # and their position in the array according to the current numbering
         FS_ids = FunctionSpace(self.particle_vom, "DG", 0)
