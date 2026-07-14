@@ -1,9 +1,10 @@
 import numpy as np
-from firedrake import *
-from pyop2.mpi import MPI, COMM_WORLD
-from firedrake.utils import IntType
 import warnings
 from dataclasses import dataclass
+
+from firedrake import *
+from pyop2.mpi import MPI
+from firedrake.utils import IntType
 
 from update_vom import VertexOnlyMeshUpdater
 from particle_logger import ParticleLogger
@@ -23,14 +24,15 @@ class ParticleTrajectorySolverParams:
 
 class ParticleTrajectorySolver():
     def __init__(self, stepper, cell_crossing_solver, params: ParticleTrajectorySolverParams, plotter: ParticlePlotterProtocol = None, vtk_dir=None, vtk_base=None, monitor=None):
-        # XXX: velocity could be a function of time so may need to pass time params?
+        # NOTE: velocity could be a function of time so we may need to pass time params
+        # Currently this is achieved by running solve over one outer step [0, dt]
 
         self.stepper = stepper
         self.cell_crossing_solver = cell_crossing_solver
         
         self._params = params
 
-        # XXX: If dt changes across time steps, then consider moving this to solve()
+        # NOTE: If dt changes across time steps, then consider moving this to solve()
         self.eff_time_tol = max(self._params.abs_time_tol, self._params.rel_time_tol * self.stepper.dt)
 
         self.particle_vom = self.stepper.X.function_space().mesh()
@@ -42,7 +44,7 @@ class ParticleTrajectorySolver():
 
         self.logger = ParticleLogger(level=self._params.log_level)
 
-        # XXX: Move VTK plotting into ParticlePlotter?
+        # TODO: Move VTK plotting into ParticlePlotter?
         if plotter is not None:
             self.plotter = plotter
         elif params.plot:
@@ -62,17 +64,16 @@ class ParticleTrajectorySolver():
         # and their position in the array according to the current numbering
         FS_ids = FunctionSpace(self.particle_vom, "DG", 0)
         self.pids = Function(FS_ids, dtype=IntType, name="particle-ids")
-        n_owned = self.particle_vom.cell_set.size
-        offset = self.particle_vom.comm.scan(n_owned) - n_owned # offset for current rank in global numbering
-        self.pids.dat.data_wo[:] = np.arange(offset, offset + n_owned)
-
+        offset = self.particle_vom.comm.scan(self.num_particles_local) - self.num_particles_local # offset for current rank in global numbering
+        self.pids.dat.data_wo[:] = np.arange(offset, offset + self.num_particles_local)
 
     @property
-    def num_particles(self):
-        return self.particle_vom.num_vertices()
+    def num_particles_local(self):
+        # NOTE: VOM is constructed with overlap_type = (DistributedMeshOverlapType.NONE, 0) so ranks can't share VOM points
+        # hence self.particle_vom.cell_set.size is the same as self.particle_vom.num_vertices() (which usually returns ghost vertices)
+        return self.particle_vom.cell_set.size
 
     def solve(self, t_start, t_end):
-        # particle_ids = np.arange(self.particle_vom.num_vertices())
         self.outer_loop_iter = 0
         
         if self.plotter:
@@ -81,7 +82,7 @@ class ParticleTrajectorySolver():
         while t_start < t_end - 1e-12:
             self.outer_loop_iter += 1
             dt_step = min(self.stepper.dt, t_end - t_start)
-            self.logger.outer_loop(self.outer_loop_iter, t_start, dt_step, t_end, self.num_particles)
+            self.logger.outer_loop(self.outer_loop_iter, t_start, dt_step, t_end, self.num_particles_local)
             
             # Run the inner loop to deal with crossings
             boundary_particles_current = self._run_inner_loop(dt_step)
@@ -104,7 +105,7 @@ class ParticleTrajectorySolver():
 
             # Handle boundary particles and update the particle VOM
             # XXX: must be a collective operation
-            n_boundary_global = COMM_WORLD.allreduce(len(boundary_particles_current), op=MPI.SUM)
+            n_boundary_global = self.particle_vom.comm.allreduce(len(boundary_particles_current), op=MPI.SUM)
             if n_boundary_global > 0:
                 # XXX: all ranks call; ranks with no absorbed particles pass boundary_particles_current=[]
                 self.particle_vom_updater.rebuild_vom(absorbed_vom_indices=boundary_particles_current, new_coords=new_phys_coords)
@@ -147,15 +148,17 @@ class ParticleTrajectorySolver():
         
     def _run_inner_loop(self, dt_step):
         self.inner_loop_iter = 0
-        self.particles_inner_loop_iter = np.zeros(self.num_particles, dtype=int)
+        self.particles_inner_loop_iter = np.zeros(self.num_particles_local, dtype=int)
 
-        dt_remaining = np.full(self.num_particles, dt_step)
+        dt_remaining = np.full(self.num_particles_local, dt_step)
         new_ref_pos = self.particle_vom.reference_coordinates.dat.data_ro.copy()
         boundary_particles_current = []
 
         while self.inner_loop_iter < self._params.max_iters:
             particles_have_dt_remaining = dt_remaining > self.eff_time_tol
-            if not any(particles_have_dt_remaining):
+
+            any_remaining = self.particle_vom.comm.allreduce(any(particles_have_dt_remaining), op=MPI.LOR)
+            if not any_remaining:
                 break
 
             self.inner_loop_iter += 1
@@ -187,7 +190,7 @@ class ParticleTrajectorySolver():
             self.logger.inner_loop(self.inner_loop_iter, particles_with_dt_remaining_idxs, particles_passed_global_idxs, particles_failed_global_idxs)
 
             # record which dt was used to advance the particles
-            dt_used = np.zeros(self.num_particles, dtype=float)
+            dt_used = np.zeros(self.num_particles_local, dtype=float)
 
             # Process passed particles
             if len(particles_passed_global_idxs) > 0:
@@ -209,7 +212,9 @@ class ParticleTrajectorySolver():
             new_parent_cells = parent_cells.copy()
         
             # Process failed particles
-            if len(particles_failed_global_idxs) > 0:
+            # NOTE: all ranks enter bisection whenever any rank has failing particles (bisection calls stepper.solve() which calls assemble() which is collective)
+            n_failed_global = self.particle_vom.comm.allreduce(len(particles_failed_global_idxs), op=MPI.SUM)
+            if n_failed_global > 0:
                 # Use the cell crossing solver to solve for crossing time and crossing position of each failed particle
                 t_cross, X_cross, bary_cross = self.cell_crossing_solver.solve(
                     self.stepper,

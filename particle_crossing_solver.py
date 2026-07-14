@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import numpy as np
 from exceptions import BisectionNotConvergedError
-
+from pyop2.mpi import MPI
 
 class CellCrossingSolver(ABC):
     """
@@ -31,6 +31,8 @@ class BisectionSolver(CellCrossingSolver):
         global BISECTION_COUNT
         BISECTION_COUNT += 1
         num_particles = len(crossing_particle_idxs)
+
+        comm = stepper.dt_fn.function_space().mesh().comm
         
         # Initialise the bisection bracket for each particle
         t_lo = np.zeros(num_particles, dtype=float)
@@ -55,7 +57,8 @@ class BisectionSolver(CellCrossingSolver):
             t_hi[~inside] = t_mid[~inside]
 
             # Declare convergence if all brackets have sufficiently shrunk
-            if np.max(t_hi - t_lo) < time_tol:
+            local_max = np.max(t_hi - t_lo) if len(t_hi) > 0 else 0.0
+            if comm.allreduce(local_max, op=MPI.MAX) < time_tol:
                 break
         else:
             raise BisectionNotConvergedError(
