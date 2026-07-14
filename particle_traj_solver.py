@@ -69,8 +69,8 @@ class ParticleTrajectorySolver():
 
     @property
     def num_particles_local(self):
-        # NOTE: VOM is constructed with overlap_type = (DistributedMeshOverlapType.NONE, 0) so ranks can't share VOM points
-        # hence self.particle_vom.cell_set.size is the same as self.particle_vom.num_vertices() (which usually returns ghost vertices)
+        # NOTE: VOM is constructed with overlap_type = (DistributedMeshOverlapType.NONE, 0) meaning that
+        # a particle can only ever be a ghost if its parent cell is a ghost on a rank??
         return self.particle_vom.cell_set.size
 
     def solve(self, t_start, t_end):
@@ -85,7 +85,7 @@ class ParticleTrajectorySolver():
             self.logger.outer_loop(self.outer_loop_iter, t_start, dt_step, t_end, self.num_particles_local)
             
             # Run the inner loop to deal with crossings
-            boundary_particles_current = self._run_inner_loop(dt_step)
+            boundary_particles_current, migrating_particles_current = self._run_inner_loop(dt_step)
 
             # Recompute physical coordinates
             new_phys_coords = assemble(
@@ -98,25 +98,20 @@ class ParticleTrajectorySolver():
                 self.outer_loop_iter,
                 self.inner_loop_iter,
                 self.particles_inner_loop_iter,
-                boundary_particles_current,
+                boundary_particles_current + migrating_particles_current,
                 self.particle_vom.reference_coordinates.dat.data_ro,
                 new_phys_coords.dat.data_ro
             )
 
             # Handle boundary particles and update the particle VOM
-            # XXX: must be a collective operation
-            n_boundary_global = self.particle_vom.comm.allreduce(len(boundary_particles_current), op=MPI.SUM)
-            if n_boundary_global > 0:
+            n_rebuild_global = self.particle_vom.comm.allreduce(len(boundary_particles_current) + len(migrating_particles_current), op=MPI.SUM)
+            if n_rebuild_global > 0:
                 # XXX: all ranks call; ranks with no absorbed particles pass boundary_particles_current=[]
-                self.particle_vom_updater.rebuild_vom(absorbed_vom_indices=boundary_particles_current, new_coords=new_phys_coords)
+                self.particle_vom_updater.rebuild_vom(absorbed_vom_indices=boundary_particles_current, 
+                                                      new_coords=new_phys_coords)
 
                 # Invalidate the stepper's cached parloops    
                 self.stepper.invalidate()
-
-                # Update particle_ids so that it is always in sync with the latest particle set
-                # NOTE: The Function rebuild mechanism (triggered here through dat access) takes care of 
-                # re-arranging the values appropriately consistently with the new VOM numbering
-                # particle_ids = self.pids.dat.data_ro
             else:
                 # Update the VOM's coordinates (topology stays the same)
                 self.particle_vom.coordinates.dat.data_wo[:] = new_phys_coords.dat.data_ro
@@ -152,7 +147,9 @@ class ParticleTrajectorySolver():
 
         dt_remaining = np.full(self.num_particles_local, dt_step)
         new_ref_pos = self.particle_vom.reference_coordinates.dat.data_ro.copy()
+
         boundary_particles_current = []
+        migrating_particles_current = []
 
         while self.inner_loop_iter < self._params.max_iters:
             particles_have_dt_remaining = dt_remaining > self.eff_time_tol
@@ -267,17 +264,24 @@ class ParticleTrajectorySolver():
                     parent_cell = parent_cells[pid, 0]
                     neighbours  = self.parent_mesh.topology.cell_facet_neighbours.data[parent_cell]
                     crossed_edge = crossed_edge_idxs[particles_failed_local_idxs[i]]
+
+                    # XXX: may be -1 or owned/ghost cell otherwise.
                     next_cell = self.parent_mesh.topology.cell_facet_neighbours.data[parent_cell, crossed_edge]
 
                     assert next_cell == -1 or next_cell in neighbours, \
                         f"particle {pid}: non-adjacent {next_cell} from {parent_cell} (nbrs {neighbours})"
 
-                    if next_cell is None or next_cell == -1:
-                        new_parent_cells[pid, 0] = parent_cell
+                    if next_cell == -1:
+                        # exterior boundary -> absorb particle
                         boundary_particles_current.append(pid)
                         dt_remaining[pid] = 0
-                        warnings.warn(f"Particle {pid} attempted to cross an exterior boundary from cell {parent_cell}")
+                        warnings.warn(f"Particle {pid} crossed an exterior boundary from cell {parent_cell}")
+                    elif next_cell > self.parent_mesh.cell_set.size:
+                        # ghost cell -> migrate particle to rank that owns the new parent cell
+                        migrating_particles_current.append(pid)
+                        new_parent_cells[pid, 0] = next_cell
                     else:
+                        # owned cell (same rank) -> update coords. + continue moving
                         new_parent_cells[pid, 0] = next_cell
 
                     A_facet, b_facet = self.parent_mesh.topology.cell_facet_coord_transforms
@@ -312,4 +316,4 @@ class ParticleTrajectorySolver():
             raise ParticleCrossingLoopNotConverged(
                     f"Cell crossings could not be resolved within {self._params.max_iters} iterations."
                 )
-        return boundary_particles_current
+        return boundary_particles_current, migrating_particles_current
