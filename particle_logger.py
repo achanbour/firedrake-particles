@@ -150,11 +150,10 @@ class ParticleLogger:
             self.inspect("passed", passed, level="info")
             self.inspect("failed", failed,  level="info")
 
-    def outer_summary(self, iteration, inner_iters, active_iters, boundary, ref_positions, phys_positions):
+    def outer_summary(self, iteration, inner_iters, boundary, ref_positions, phys_positions):
         if self.LEVELS["summary"] <= self.level:
             self.section(f"End of time step {iteration} — summary", level="summary")
             self.inspect("Inner iterations", inner_iters, level="summary", indent=1)
-            self.inspect("Active iters/particle", active_iters, level="summary", indent=1)
             self.inspect("Boundary particles", boundary, level="summary", indent=1)
             self.inspect("New reference positions", ref_positions,  level="summary", indent=1)
             self.inspect("New physical positions",  phys_positions, level="summary", indent=1)
