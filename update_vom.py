@@ -276,7 +276,7 @@ class VertexOnlyMeshUpdater:
         self.vom._saved_coordinate_dat_version = self.vom.coordinates.dat.dat_version
 
 
-    def rebuild_vom(self, absorbed_vom_indices, new_coords=None):
+    def rebuild_vom(self, absorbed_vom_indices, new_coords=None, migrate_functions=True):
         from firedrake.mesh import (
             _parent_mesh_embedding,
             _swarm_original_ordering_preserve,
@@ -541,3 +541,21 @@ class VertexOnlyMeshUpdater:
             # This should have been already set to None when the VOM was first constructed
             self.vom.reference_coordinates = None
 
+        if migrate_functions:
+            self._rebuilds_functions()
+
+    def _rebuild_functions(self):
+            """Eagerly migrate every live Function on the VOM to the new topology."""
+            topology = self.vom._topology_dm
+            function_registry = getattr(topology, "_live_functions", None)
+
+            if function_registry is None:
+                return
+
+            # Sweep through registered functions in creation order
+            # -- deterministic and identical accross all MPI ranks which is needed for
+            # consistent migration (using collective SF bcast)
+            for key in sorted(function_registry.keys()):
+                f = function_registry.get(key)
+                if f is not None:
+                    f._match_mesh_topology_version()
