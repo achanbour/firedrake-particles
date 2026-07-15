@@ -9,8 +9,6 @@ from particle_time_stepper_new import StormerVerletStepper
 from particle_crossing_solver import BisectionSolver, BisectionSolverParams
 from particle_traj_solver import ParticleTrajectorySolver, ParticleTrajectorySolverParams
 
-from vtk_output import write_pvd, write_particle_vtk
-
 """
 This examples solves for the trajectory of particles subject to an external force derived
 from a harmonic potential.
@@ -63,9 +61,10 @@ particle_traj_solver_params = ParticleTrajectorySolverParams(
     plot=False
 )
 
+# ---- output ----
 VTKFile("output.pvd").write(accel_fn)
-Path("particles").mkdir(exist_ok=True)
-base = f"particles/particles_{{}}.vtu"
+particle_file = VTKFile("particles.pvd")
+
 
 def total_energy(pos, vel):
     return np.sum(
@@ -80,17 +79,15 @@ def energy_monitor(t, solver):
     vel = solver.stepper.v.dat.data_ro
     E_hist.append(total_energy(pos, vel))
     t_hist.append(t)
+    particle_file.write(solver.stepper.v, time=t)
 
 particle_traj_solver = ParticleTrajectorySolver(
     stepper, 
     cell_crossing_solver, 
-    particle_traj_solver_params, 
-    vtk_dir="particles", 
-    vtk_base=base,
+    particle_traj_solver_params,
     monitor=energy_monitor)
 
 
-write_particle_vtk(base.format(0), particle_vom, stepper.v) # save initial frame
 energy_monitor(t_start, particle_traj_solver) # record initial energy
 
 T_final, surviving_particle_ids = particle_traj_solver.solve(t_start, t_end)

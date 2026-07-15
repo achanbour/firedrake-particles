@@ -10,8 +10,6 @@ from particle_time_stepper_new import ForwardEulerStepper
 from particle_crossing_solver import BisectionSolver, BisectionSolverParams
 from particle_traj_solver import ParticleTrajectorySolver, ParticleTrajectorySolverParams
 
-from vtk_output import write_pvd, write_particle_vtk
-
 """
 Circular particle trajectory using a rigid-body rotation field with constant angular speed.
 """
@@ -44,12 +42,12 @@ omega = 10*np.pi
 x = SpatialCoordinate(parent_mesh)
 v_expr = omega * as_vector([-x[1]+c[1], x[0]-c[0]])
 
-# V = VectorFunctionSpace(parent_mesh, "CG", 1)
-# v_fn = Function(V, name="velocity").interpolate(v_expr)
+V = VectorFunctionSpace(parent_mesh, "CG", 1)
+v_fn = Function(V, name="velocity").interpolate(v_expr)
 
-# VTKFile("output.pvd").write(v_fn)
-# Path("particles").mkdir(exist_ok=True)
-# base = f"particles/particles_{{}}.vtu"
+# ---- output ----
+VTKFile("output.pvd").write(v_fn)
+particle_file = VTKFile("particles.pvd")
 
 # Define the solvers
 t_start = 0
@@ -75,21 +73,21 @@ def radius_monitor(t, solver):
     pos = solver.particle_vom.coordinates.dat.data_ro
     r_hist.append(np.max(np.linalg.norm(pos - c, axis=1)))
     t_hist.append(t)
+    particle_file.write(solver.stepper.v, time=t)
 
 particle_traj_solver = ParticleTrajectorySolver(
     stepper, 
     cell_crossing_solver, 
     particle_traj_solver_params,
-    # vtk_dir="particles", 
-    # vtk_base=base,
     monitor=radius_monitor
     )
 
 # Initial coordinates in VOM order (before solve)
 init_pos = particle_vom.coordinates.dat.data_ro.copy()
 
-# write_particle_vtk(base.format(0), particle_vom, stepper.v) # save initial frame
-# radius_monitor(t_start, particle_traj_solver) # record initial radius
+# Record initial frame
+radius_monitor(t_start, particle_traj_solver)
+
 
 T_final, surviving_particle_ids = particle_traj_solver.solve(t_start, t_end)
 

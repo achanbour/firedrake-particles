@@ -9,8 +9,6 @@ from particle_crossing_solver import BisectionSolver
 from particle_time_stepper_new import ForwardEulerStepper
 from particle_traj_solver import ParticleTrajectorySolver, ParticleTrajectorySolverParams
 
-from vtk_output import write_particle_vtk, write_pvd
-
 mesh = UnitSquareMesh(40, 40, quadrilateral=False)
 V = VectorFunctionSpace(mesh, "CG", 2) # velocity FS
 
@@ -45,30 +43,20 @@ solver = ParticleTrajectorySolver(stepper, BisectionSolver(), params)
 
 # ---- output ----
 VTKFile("output.pvd").write(u_fn)
-
-# Path("particles").mkdir(exist_ok=True)
-# base = "particles/particles_{}.vtu"
-# count = 0
-
 particle_file = VTKFile("particles.pvd")
 
 # Evaluate the velocity field at the particles
-u_at_points = Function(P0DG)
+u_at_points = Function(P0DG, name="Particle-Velocity")
 u_at_points.interpolate(u_fn)
 
 time = 0.0
 for timestep in range(timesteps):
-    # write_particle_vtk(base.format(count), particle_vom, u_at_points)
     particle_file.write(u_at_points, time=time)
-    # count += 1
 
     time_start = time
     stepper._dt = dt
     time += dt
-    # u_fn.interpolate(u_expr)
     solver.solve(time_start, time)
     u_at_points.interpolate(u_fn)
 
 particle_file.write(u_at_points, time=time) # capture the final state
-
-# write_pvd("particles.pvd", base, count)
