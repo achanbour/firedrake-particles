@@ -51,6 +51,9 @@ class ParticleTimeStepper(ABC):
 
         self._step_callable_is_current = False
 
+        # Record any expressions involving interpolate thatare not part of the update expression
+        self._inter_exprs = []
+
 
     # -- Define property methods
     @property
@@ -114,9 +117,13 @@ class ParticleTimeStepper(ABC):
 
     def _reset_interpolators(self):
         """Clear cached Interpolators so they get rebuilt against the current VOM topology.
-        Note that the symbolic expressions remain valid and are therefore untouched."""
-        for node in extract_type(self._update_expr, Interpolate):
-            node.__dict__.pop("_interpolator", None)
+        Note that the symbolic expressions remain valid throughout."""
+        # for node in extract_type(self._update_expr, Interpolate):
+        #     node.__dict__.pop("_interpolator", None)
+
+        for expr in [self._update_expr, *self._inter_exprs]:
+            for node in extract_type(expr, Interpolate):
+                node.__dict__.pop("_interpolator", None)
 
 
     def _check_step_callable_is_current(self):
@@ -159,18 +166,37 @@ class ForwardEulerStepper(ParticleTimeStepper):
         self._v = v
         self._v_ref = self._v_pullback(self._v)
 
+        # XXX: J^-1*v is the same for all substeps (depends only on particle positions) so 
+        # we can evaluate it once at the start of the inner loop iteration and reuse its result
+        self._v_ref_fn = Function(
+            VectorFunctionSpace(particle_vom, "DG", 0),
+            name="particle-v-ref"
+        )
+        self._v_ref_interp = interpolate(self._v_ref, self._v_ref_fn.function_space())
+        self._inter_exprs.append(self._v_ref_interp)
+        
+        self._v_ref_callable = partial(
+            assemble,
+            self._v_ref_interp
+        )
+
         self._build_update_expr()
         self._build_step_callable()
 
 
     def _build_update_expr(self):
         """X(t + dt) = X(t) + J^-1 * v * dt"""
-        self._update_expr = self._X + self._dt_fn * self._v_ref
-    
+        # XXX: nested interpolate
+        # self._update_expr = self._X + self._dt_fn * self._v_ref
+        
+        # XXX: un-nest the interpolate of v_ref to evaluate it separately
+        self._update_expr = self._X + self._dt_fn * self._v_ref_fn
 
-    # @property
-    # def v(self):
-    #     return self._v
+    
+    def begin_substep(self):
+        # make sure the interpolator is rebuilt
+        self._check_step_callable_is_current()
+        self._v_ref_fn.assign(self._v_ref_callable())
 
     @property
     def v(self):
@@ -181,7 +207,9 @@ class ForwardEulerStepper(ParticleTimeStepper):
 
     @property
     def v_ref(self):
-        return assemble(interpolate(self._v_ref, self.particle_vom.coordinates.function_space()))
+        # return assemble(interpolate(self._v_ref, self.particle_vom.coordinates.function_space()))
+        # return cached value
+        return self._v_ref_fn
     
     
 class StormerVerletStepper(ParticleTimeStepper):
@@ -213,6 +241,9 @@ class StormerVerletStepper(ParticleTimeStepper):
 
         # -- for position update
         self._v_half = self._v + 0.5 * self._dt_fn * self._a_start
+
+        # XXX: V_ref^{n+1/2} isn't constant per substep - different particles consume different dts
+        # during the bisection call.
         self._v_half_ref = self._v_pullback(self._v_half)
 
         self._v_update = self._v + 0.5 * self._dt_fn * (self._a_start + self._a_end)
@@ -252,7 +283,7 @@ class StormerVerletStepper(ParticleTimeStepper):
     
     @property
     def v_ref(self):
-        # return the reference space velocity used for the position drift step
+        # return the reference velocity used for the position drift
         return assemble(interpolate(self._v_half_ref, self.particle_vom.coordinates.function_space()))
 
 
