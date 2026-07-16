@@ -32,7 +32,7 @@ class BisectionSolver(CellCrossingSolver):
         BISECTION_COUNT += 1
         num_particles = len(crossing_particle_idxs)
 
-        comm = stepper.dt_fn.function_space().mesh().comm
+        comm = stepper.particle_vom.comm
         
         # Initialise the bisection bracket for each particle
         t_lo = np.zeros(num_particles, dtype=float)

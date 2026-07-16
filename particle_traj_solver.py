@@ -134,8 +134,9 @@ class ParticleTrajectorySolver():
         self.dt_remaining.dat.data_wo[:] = dt_step
 
         while self.inner_loop_iter < self._params.max_iters:
-
             dt_remaining_arr = self.dt_remaining.dat.data_ro.copy()
+            dt_consumed_arr = np.zeros_like(dt_remaining_arr)
+            
             particles_have_dt_remaining = dt_remaining_arr > self.eff_time_tol
 
             any_remaining = self.particle_vom.comm.allreduce(any(particles_have_dt_remaining), op=MPI.LOR)
@@ -144,13 +145,13 @@ class ParticleTrajectorySolver():
 
             self.inner_loop_iter += 1
 
-            particles_with_dt_remaining_idxs = np.where(particles_have_dt_remaining)[0]
+            active_particles_idxs = np.where(particles_have_dt_remaining)[0]
 
             self.stepper.dt_fn.dat.zero()
-            self.stepper.dt_fn.dat.data_wo[particles_with_dt_remaining_idxs] = dt_remaining_arr[particles_with_dt_remaining_idxs]
+            self.stepper.dt_fn.dat.data_wo[active_particles_idxs] = dt_remaining_arr[active_particles_idxs]
 
             # Capture stepper's initial state
-            self.stepper.begin_substep()
+            self.stepper.begin_step()
 
             # Compute candidate reference positions by executing a full step
             candidate_ref_pos = self.stepper.step()
@@ -159,22 +160,19 @@ class ParticleTrajectorySolver():
             # Split particles into two subsets crossed/not_crossed depending on whether they have left their containing cell
             # - Passed/Failed index set corresponds the rank-local set of particles based on the current VOM ordering
             # - Active index set corresponds to the active subset given by particles_with_remaining_dt
-            passed_mask = np.all(candidate_bary_coords[particles_with_dt_remaining_idxs] >= -self._params.bary_tol, axis=1)
+            passed_mask = np.all(candidate_bary_coords[active_particles_idxs] >= -self._params.bary_tol, axis=1)
             
             particles_passed_active_idxs = np.where(passed_mask)[0]
             particles_failed_active_idxs = np.where(~passed_mask)[0]
             
-            particles_passed_idxs = particles_with_dt_remaining_idxs[particles_passed_active_idxs]
-            particles_failed_idxs = particles_with_dt_remaining_idxs[particles_failed_active_idxs]
+            particles_passed_idxs = active_particles_idxs[particles_passed_active_idxs]
+            particles_failed_idxs = active_particles_idxs[particles_failed_active_idxs]
             
-            self.logger.inner_loop(self.inner_loop_iter, particles_with_dt_remaining_idxs, particles_passed_idxs, particles_failed_idxs)
-
-            # Used to record which dt was used to advance the particles
-            dt_used = np.zeros(self.num_particles_local, dtype=float)
+            self.logger.inner_loop(self.inner_loop_iter, active_particles_idxs, particles_passed_idxs, particles_failed_idxs)
 
             # Process passed particles
             if len(particles_passed_idxs) > 0:
-                dt_used[particles_passed_idxs] = dt_remaining_arr[particles_passed_idxs]
+                dt_consumed_arr[particles_passed_idxs] = dt_remaining_arr[particles_passed_idxs]
                 dt_remaining_arr[particles_passed_idxs] = 0
 
                 # Register coordinates
@@ -187,7 +185,7 @@ class ParticleTrajectorySolver():
                                             indices=particles_passed_idxs, 
                                             level="info")
             
-            parent_cells = self.particle_vom.topology.cell_parent_cell_list.copy()
+            parent_cells = self.particle_vom.topology.cell_parent_cell_list.copy()[:self.num_particles_local].copy()
             new_parent_cells = parent_cells.copy()
         
             # Process failed particles
@@ -203,7 +201,8 @@ class ParticleTrajectorySolver():
                     bary_tol=self._params.bary_tol,
                     time_tol=self.eff_time_tol,
                 )
-                dt_used[particles_failed_idxs] = t_cross
+
+                dt_consumed_arr[particles_failed_idxs] = t_cross 
 
                 # Decrement dt_remaining by t_cross
                 dt_remaining_arr[particles_failed_idxs] -= t_cross
@@ -219,10 +218,10 @@ class ParticleTrajectorySolver():
                                             level="info")
 
                 # Determine which edge each particle crossed
-                crossed_edge_idxs = np.full(len(particles_with_dt_remaining_idxs), None, dtype=object)
+                crossed_edge_idxs = np.full(len(active_particles_idxs), None, dtype=object)
 
                 # Check that the selected edge agrees with the direction of the particle's motion (given by the velocity field)
-                for i, pid in enumerate(particles_failed_active_idxs):
+                for i, pid_local in enumerate(particles_failed_active_idxs):
                     crossed_edge = int(np.argmin(abs(bary_cross[i])))
                     crossed_edge_normal = self.ref_cell.compute_reference_normal(1, crossed_edge)
                     
@@ -237,35 +236,35 @@ class ParticleTrajectorySolver():
                             if np.dot(other_edge_normal, v_ref) > 0:
                                 crossed_edge = other_edge
                                 break
-                    crossed_edge_idxs[pid] = crossed_edge
+                    crossed_edge_idxs[pid_local] = crossed_edge
 
                 # Identify the neighbouring cell for each particle and its reference coordinates in that new cell
-                for i, pid in enumerate(particles_failed_idxs):
-                    parent_cell = parent_cells[pid, 0]
-                    neighbours  = self.parent_mesh.topology.cell_facet_neighbours.data[parent_cell]
+                for i, pid_local in enumerate(particles_failed_idxs):
+                    parent_cell = parent_cells[pid_local, 0]
+                    neighbours  = self.parent_mesh.topology.cell_facet_neighbours.data_ro[parent_cell]
                     crossed_edge = crossed_edge_idxs[particles_failed_active_idxs[i]]
 
                     # XXX: may be -1 or owned/ghost cell otherwise.
                     next_cell = self.parent_mesh.topology.cell_facet_neighbours.data[parent_cell, crossed_edge]
 
                     assert next_cell == -1 or next_cell in neighbours, \
-                        f"particle {pid}: non-adjacent {next_cell} from {parent_cell} (nbrs {neighbours})"
+                        f"particle {pid_local}: non-adjacent {next_cell} from {parent_cell} (nbrs {neighbours})"
 
                     if next_cell == -1:
                         # exterior boundary -> absorb particle
-                        boundary_particles_current.append(pid)
-                        dt_remaining_arr[pid] = 0
-                        warnings.warn(f"Particle {pid} crossed an exterior boundary from cell {parent_cell}")
+                        boundary_particles_current.append(pid_local)
+                        dt_remaining_arr[pid_local] = 0
+                        warnings.warn(f"Particle {pid_local} crossed an exterior boundary from cell {parent_cell}")
                     elif next_cell >= self.parent_mesh.cell_set.size:
                         # ghost cell -> migrate particle to rank that owns the new parent cell
-                        migrating_particles_current.append(pid)
-                        new_parent_cells[pid, 0] = next_cell
+                        migrating_particles_current.append(pid_local)
+                        new_parent_cells[pid_local, 0] = next_cell
                     else:
                         # owned cell (same rank) -> update coords. + continue moving
-                        new_parent_cells[pid, 0] = next_cell
+                        new_parent_cells[pid_local, 0] = next_cell
 
                     A_facet, b_facet = self.parent_mesh.topology.cell_facet_coord_transforms
-                    new_ref_pos[pid] = A_facet.data[parent_cell, crossed_edge] @ X_cross[i] + b_facet.data[parent_cell, crossed_edge]
+                    new_ref_pos[pid_local] = A_facet.data_ro[parent_cell, crossed_edge] @ X_cross[i] + b_facet.data_ro[parent_cell, crossed_edge]
                 
                 self.logger.print_particles("Failed particles - Cell transitions",
                                             {
@@ -282,8 +281,8 @@ class ParticleTrajectorySolver():
             
             # Change dt to match the step consumed by each particle
             self.stepper.dt_fn.dat.zero()
-            self.stepper.dt_fn.dat.data_wo[particles_with_dt_remaining_idxs] = dt_used[particles_with_dt_remaining_idxs]
-            self.stepper.finalize_substep()
+            self.stepper.dt_fn.dat.data_wo[:] = dt_consumed_arr
+            self.stepper.finalize_step()
 
             self.dt_remaining.dat.data_wo[:] = dt_remaining_arr
 
@@ -300,7 +299,6 @@ class ParticleTrajectorySolver():
                 )
                 
                 self.particle_vom_updater.rebuild_vom(absorbed_vom_indices=boundary_particles_current, new_coords=new_phys_coords)
-                
                 self.stepper.invalidate()
 
                 # XXX: reconsruct loop state given the new ordering

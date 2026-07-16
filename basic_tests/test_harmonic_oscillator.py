@@ -42,7 +42,8 @@ accel_fn = Function(Va, name="acceleration").interpolate(accel_expr)
 
 # -- Initial velocity
 init_pos = particle_vom.coordinates.dat.data_ro.copy()
-V0 = 0.5 * omega * np.column_stack([-(init_pos[:, 1] - c[1]), init_pos[:, 0] - c[0]]) # 50% slower than for a perfect circular motion
+# 50% slower than for a perfect circular motion
+V0 = 0.5 * omega * np.column_stack([-(init_pos[:, 1] - c[1]), init_pos[:, 0] - c[0]])
 
 # Solver setup
 t_start = 0
