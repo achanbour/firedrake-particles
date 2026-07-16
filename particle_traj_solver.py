@@ -220,13 +220,15 @@ class ParticleTrajectorySolver():
                 # Determine which edge each particle crossed
                 crossed_edge_idxs = np.full(len(active_particles_idxs), None, dtype=object)
 
+                v_ref_arr = self.stepper.v_ref.dat.data_ro
+
                 # Check that the selected edge agrees with the direction of the particle's motion (given by the velocity field)
                 for i, pid_local in enumerate(particles_failed_active_idxs):
                     crossed_edge = int(np.argmin(abs(bary_cross[i])))
                     crossed_edge_normal = self.ref_cell.compute_reference_normal(1, crossed_edge)
-                    
-                    v_ref = self.stepper.v_ref.dat.data_ro[particles_failed_idxs[i]]
 
+                    v_ref = v_ref_arr[particles_failed_idxs[i]]
+                    
                     # TODO: Test this on edge cases
                     if np.dot(crossed_edge_normal, v_ref) <= 0:
                         for other_edge in range(len(bary_cross[i])):

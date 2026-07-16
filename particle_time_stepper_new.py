@@ -215,6 +215,7 @@ class StormerVerletStepper(ParticleTimeStepper):
         self._v_half = self._v_fn + 0.5 * self._dt_fn * self._a_start_fn
 
         # NOTE: In SV, velocity is always a particle state so the pullback only requires sampling invJ
+        # we can therefore pre-evaluate it once per substep and use it.
         # self._v_half_ref = self._v_pullback(self._v_half)
         self._invJ_fn = Function(
             TensorFunctionSpace(particle_vom, "DG", 0),
@@ -223,6 +224,8 @@ class StormerVerletStepper(ParticleTimeStepper):
         self._invJ_interp = self._sample_on_particles(self._invJ_expr, tensor=True)
         self._interp_exprs.append(self._invJ_interp)
         
+        # NOTE: pre-evaluating invJ makes the below expression built entirely out of DG0 Functions living on the VOM.
+        # The assembly then becomes cheap (a pointwise kernel that's equivalent to doing numpy on dats?)
         self._v_half_ref = self._invJ_fn * self._v_half
         self._v_half_ref_interp = interpolate(self._v_half_ref, VectorFunctionSpace(particle_vom, "DG", 0))
         self._interp_exprs.append(self._v_half_ref_interp)
