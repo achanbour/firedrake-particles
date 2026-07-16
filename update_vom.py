@@ -69,7 +69,8 @@ class VertexOnlyMeshUpdater:
         i.e., ref_coords correctly represents each point's reference coordinates in its new parent cell.
         """
         swarm = self.vom.topology_dm
-        vom_to_swarm = self.vom.cell_closure[:, -1] # VOM cell ID -> DMSwarm point ID
+        n_owned = self.vom.cell_set.size
+        vom_to_swarm = self.vom.cell_closure[:n_owned, -1] # VOM cell ID -> DMSwarm point ID
 
         # NOTE: Swarm fields are in DMSwarm ordering but `next_parent_cells` and `new_refcoords` are in VOM ordering.
 
@@ -119,7 +120,7 @@ class VertexOnlyMeshUpdater:
         
         # Mutate the map instead of invalidating it
         if "cell_parent_cell_list" in topology.__dict__:
-            topology.__dict__["cell_parent_cell_list"][:] = next_parent_cells[:]
+            topology.__dict__["cell_parent_cell_list"][:n_owned] = next_parent_cells[:]
 
         # 5) Update reference coordinates Function
         # NOTE: Since new_ref_coords is already in VOM ordering, AND assuming the VOM does not get reodered,
@@ -522,6 +523,7 @@ class VertexOnlyMeshUpdater:
                                                 (topology.num_vertices(), gdim))
         # Resize the CoordinatelessFunction dat buffer and assign new values
         self.vom._coordinates.dat = coords_fs.make_dat(val=coords_data, name=self.vom._coordinates.name()) # returns a new op2.Dat
+        self.vom._coordinates.__dict__.pop("dat", None)
 
         # The coordinate field has changed so we need to reset the rtree
         self.vom.clear_rtree()
@@ -537,12 +539,13 @@ class VertexOnlyMeshUpdater:
             # Resize the CoordinatelessFunction dat buffer and assign new values
             # NOTE: Since reference_coordinates is a Function, ._data accesses the CoordinatelessFunction it wraps where the data buffer lives
             self.vom.reference_coordinates._data.dat = ref_coords_fs.make_dat(val=ref_coords_data, name=self.vom.reference_coordinates.name()) # returns a new op2.Dat
+            self.vom.reference_coordinates.__dict__.pop("dat", None) # drop stale __getattr__ cache
         else:
             # This should have been already set to None when the VOM was first constructed
             self.vom.reference_coordinates = None
 
         if migrate_functions:
-            self._rebuilds_functions()
+            self._rebuild_functions()
 
     def _rebuild_functions(self):
             """Eagerly migrate every live Function on the VOM to the new topology."""

@@ -92,6 +92,9 @@ class ParticleLogger:
             print(row)
     
     def print_particles(self, label, data, indices=None, level="debug"):
+        if len(indices) == 0:
+            return
+        
         if self.LEVELS[level] > self.level:
             return
 
