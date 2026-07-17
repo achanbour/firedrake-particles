@@ -46,6 +46,8 @@ class ParticleTimeStepper(ABC):
         FS = FunctionSpace(particle_vom, "DG", 0)
         self._dt_fn = Function(FS, name="per-particle-time-step-function")
 
+        self._fields = [self._dt_fn]
+
         # Record any expressions involving interpolates that are part of the update
         self._interp_exprs = []
         self._rebuild_interp = False
@@ -63,6 +65,12 @@ class ParticleTimeStepper(ABC):
     @property
     def dt(self):
         return self._dt
+    
+    @property
+    def fields(self):
+        """Returns a list of persistent Functions owned by the stepper that must be
+        eagerly migrated during a VOM rebuild."""
+        return self._fields
 
 
     # NOTE: Using private attributes + property methods enforce a read-only contract on fields owned by the stepper.
@@ -152,6 +160,12 @@ class ForwardEulerStepper(ParticleTimeStepper):
             VectorFunctionSpace(particle_vom, "DG", 0),
             name="particle-v-ref"
         )
+
+        # register fields
+        self._fields.append(self._v_ref_fn)
+        if extract_unique_domain(self._v) is self.particle_vom:
+            self._fields.append(self._v)
+
         self._v_ref_interp = interpolate(self._v_ref, self._v_ref_fn.function_space())
         self._interp_exprs.append(self._v_ref_interp)
 
@@ -234,6 +248,9 @@ class StormerVerletStepper(ParticleTimeStepper):
         self._v_update = self._v_fn + 0.5 * self._dt_fn * (self._a_start_fn + self._a_end_fn)
         self._v_update_interp = interpolate(self._v_update, self._v_fn.function_space())
         self._interp_exprs.append(self._v_update_interp)
+
+        # register fields
+        self._fields.extend([self._a_start_fn, self._a_end_fn, self._v_fn, self._invJ_fn])        
 
         self._build_update_expr()
         self._init_step_interp()

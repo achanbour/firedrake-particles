@@ -99,11 +99,16 @@ class ParticleLogger:
             return
 
         arrays = {k: np.atleast_1d(np.asarray(v)) for k, v in data.items()}
-        N = next(iter(arrays.values())).shape[0]
+        N = len(indices)
 
         # For each field k, fetch the value(s) of each particle
         rows = {}
         for k, a in arrays.items():
+            if a.shape[0] != N:
+                raise ValueError(
+                f"print_particles('{label}'): column '{k}' has length {a.shape[0]}, "
+                f"expected {N} (= len(indices))"
+            )
             rows[k] = []
             for i in range(N):
                 entry = a[i]

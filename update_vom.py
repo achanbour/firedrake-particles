@@ -1,4 +1,5 @@
 import numpy as np
+from firedrake.petsc import PETSc
 
 class EmptyVOMError(Exception):
     """Raised when all particles have been absorbed and the VertexOnlyMesh is empty."""
@@ -277,7 +278,7 @@ class VertexOnlyMeshUpdater:
         self.vom._saved_coordinate_dat_version = self.vom.coordinates.dat.dat_version
 
 
-    def rebuild_vom(self, absorbed_vom_indices, new_coords=None, migrate_functions=True):
+    def rebuild_vom(self, absorbed_vom_indices, new_coords=None, functions_to_migrate=()):
         from firedrake.mesh import (
             _parent_mesh_embedding,
             _swarm_original_ordering_preserve,
@@ -317,7 +318,7 @@ class VertexOnlyMeshUpdater:
                 coords=new_coords,
                 tolerance=tolerance,
                 redundant=False, # each rank embedds its own local coordinates
-                exclude_halos=False,
+                exclude_halos=True, # assign each particle to exactly one rank (no duplicates)
                 remove_missing_points=False
             )
         else:
@@ -480,10 +481,12 @@ class VertexOnlyMeshUpdater:
         for _label_name in ("pyop2_core", "pyop2_owned", "pyop2_ghost"):
             if swarm.hasLabel(_label_name):
                 swarm.clearLabelStratum(_label_name, 1)
-
+        
+        
         # Refresh the entity classes (before calling create_section which uses the DM's entity class labels)
-        dmcommon.mark_entity_classes_using_cell_dm(swarm) # rewrite the class labels on the swarm points based on the plex cell classes of each point's parent cell
-        topology._entity_classes = dmcommon.get_entity_classes(swarm) # read those labels and store counts on the vom's topology
+        dmcommon.mark_entity_classes_using_cell_dm(swarm) # rewrite the class labels on the swarm points based on the ownership of the plex parent cell
+        topology._entity_classes = dmcommon.get_entity_classes(swarm) # read swarm labels and store counts on the vom's topology
+
 
         # Rebuild _cell_numbering and _vertex_numbering from new _dm_renumbering
         entity_dofs = np.array([1], dtype=IntType)  # 1 DoF per point
@@ -523,7 +526,7 @@ class VertexOnlyMeshUpdater:
                                                 (topology.num_vertices(), gdim))
         # Resize the CoordinatelessFunction dat buffer and assign new values
         self.vom._coordinates.dat = coords_fs.make_dat(val=coords_data, name=self.vom._coordinates.name()) # returns a new op2.Dat
-        self.vom._coordinates.__dict__.pop("dat", None)
+        # self.vom._coordinates.__dict__.pop("dat", None)
 
         # The coordinate field has changed so we need to reset the rtree
         self.vom.clear_rtree()
@@ -539,26 +542,32 @@ class VertexOnlyMeshUpdater:
             # Resize the CoordinatelessFunction dat buffer and assign new values
             # NOTE: Since reference_coordinates is a Function, ._data accesses the CoordinatelessFunction it wraps where the data buffer lives
             self.vom.reference_coordinates._data.dat = ref_coords_fs.make_dat(val=ref_coords_data, name=self.vom.reference_coordinates.name()) # returns a new op2.Dat
-            self.vom.reference_coordinates.__dict__.pop("dat", None) # drop stale __getattr__ cache
+            # self.vom.reference_coordinates.__dict__.pop("dat", None) # drop stale __getattr__ cache
         else:
             # This should have been already set to None when the VOM was first constructed
             self.vom.reference_coordinates = None
 
-        if migrate_functions:
-            self._rebuild_functions()
+        self._rebuild_functions(functions_to_migrate)
 
-    def _rebuild_functions(self):
-            """Eagerly migrate every live Function on the VOM to the new topology."""
-            topology = self.vom._topology_dm
-            function_registry = getattr(topology, "_live_functions", None)
+    def _rebuild_functions(self, functions):
+            """Migrate the given set of Functions to match the new VOM topology."""
+            for f in functions:
+                f._match_mesh_topology_version()
 
-            if function_registry is None:
-                return
 
-            # Sweep through registered functions in creation order
-            # -- deterministic and identical accross all MPI ranks which is needed for
-            # consistent migration (using collective SF bcast)
-            for key in sorted(function_registry.keys()):
-                f = function_registry.get(key)
-                if f is not None:
-                    f._match_mesh_topology_version()
+    # def _rebuild_functions(self):
+    #         """Eagerly migrate every live Function on the VOM to the new topology."""
+    #         registry = getattr(self.vom.topology, "_live_functions", None)
+            
+    #         if registry is None:
+    #             raise RuntimeError(
+    #             "VOM live Function registry not found: could not migrate Functions defined on the VOM."
+    #         )
+            
+    #         for key in sorted(registry.keys()):
+    #             f = registry.get(key)
+    #             print(f"[rank {self.vom.comm.rank}] migrating function ({key}, {f.name()})")
+    #             if f is not None:
+    #                 f._match_mesh_topology_version()
+
+            

@@ -52,7 +52,7 @@ T_final, surviving_particle_ids = particle_traj_solver.solve(t_start, t_end)
 n_after = particle_traj_solver.num_particles_local
 
 # Check 1: did particles change ranks?
-print(f"[rank {comm.rank}] owned {n_before} -> {n_after} particles, pids now {sorted(surviving_particle_ids)}",
+print(f"[rank {comm.rank}] initially owned {n_before} particles, now owned {n_after} particles with pids {sorted(surviving_particle_ids)}",
       flush=True)
 
 # Check 2: no particle left the domain

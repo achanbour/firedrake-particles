@@ -67,6 +67,8 @@ class ParticleTrajectorySolver():
         # Define a per-particle remainining time-step Function
         self.dt_remaining = Function(DG0, name="dt-remaining")
 
+        self._fields = (self.pids, self.dt_remaining, *self.stepper.fields)
+
 
     @property
     def num_particles_local(self):
@@ -240,39 +242,42 @@ class ParticleTrajectorySolver():
                                 break
                     crossed_edge_idxs[pid_local] = crossed_edge
 
-                # Identify the neighbouring cell for each particle and its reference coordinates in that new cell
+                ext_mask = self.parent_mesh.topology.cell_facet_exterior_mask
+                state = np.full(len(particles_failed_idxs), "", dtype=object)
+
+                # Identify the neighbouring cell for each particle and compute its reference coordinates in that new cell
                 for i, pid_local in enumerate(particles_failed_idxs):
                     parent_cell = parent_cells[pid_local, 0]
-                    neighbours  = self.parent_mesh.topology.cell_facet_neighbours.data_ro[parent_cell]
                     crossed_edge = crossed_edge_idxs[particles_failed_active_idxs[i]]
+                    next_cell = self.parent_mesh.topology.cell_facet_neighbours.data_ro_with_halos[parent_cell, crossed_edge]
 
-                    # XXX: may be -1 or owned/ghost cell otherwise.
-                    next_cell = self.parent_mesh.topology.cell_facet_neighbours.data[parent_cell, crossed_edge]
-
-                    assert next_cell == -1 or next_cell in neighbours, \
-                        f"particle {pid_local}: non-adjacent {next_cell} from {parent_cell} (nbrs {neighbours})"
-
-                    if next_cell == -1:
-                        # exterior boundary -> absorb particle
+                    if next_cell != -1:
+                        # Owned or ghost -> transfer and keep stepping
+                        new_parent_cells[pid_local, 0] = next_cell
+                        A_facet, b_facet = self.parent_mesh.topology.cell_facet_coord_transforms
+                        new_ref_pos[pid_local] = A_facet.data_ro_with_halos[parent_cell, crossed_edge] @ X_cross[i] + b_facet.data_ro_with_halos[parent_cell, crossed_edge]
+                        if next_cell < self.particle_vom.cell_set.size:
+                            state[i] = "crossed into owned cell"
+                        else: 
+                            state[i] = "crossed into ghost cell"
+                    elif ext_mask[parent_cell, crossed_edge]:
+                        # At domain boundary -> absorb the particle
                         boundary_particles_current.append(pid_local)
-                        dt_remaining_arr[pid_local] = 0
-                        warnings.warn(f"Particle {pid_local} crossed an exterior boundary from cell {parent_cell}")
-                    elif next_cell >= self.parent_mesh.cell_set.size:
-                        # ghost cell -> migrate particle to rank that owns the new parent cell
-                        migrating_particles_current.append(pid_local)
-                        new_parent_cells[pid_local, 0] = next_cell
+                        dt_remaining_arr[pid_local] = 0 
+                        new_ref_pos[pid_local] = X_cross[i]
+                        state[i] = "absorbed"
                     else:
-                        # owned cell (same rank) -> update coords. + continue moving
-                        new_parent_cells[pid_local, 0] = next_cell
-
-                    A_facet, b_facet = self.parent_mesh.topology.cell_facet_coord_transforms
-                    new_ref_pos[pid_local] = A_facet.data_ro[parent_cell, crossed_edge] @ X_cross[i] + b_facet.data_ro[parent_cell, crossed_edge]
+                        # At partition boundary (neighbour not locally known) -> hand over to the new owning rank
+                        migrating_particles_current.append(pid_local)
+                        new_ref_pos[pid_local] = X_cross[i]
+                        state[i] = "migrated to new owning rank"
                 
                 self.logger.print_particles("Failed particles - Cell transitions",
                                             {
                                                 "parent_cell": parent_cells[particles_failed_idxs, 0],
                                                 "crossed_edge": crossed_edge_idxs[particles_failed_active_idxs],
                                                 "new_parent_cell": new_parent_cells[particles_failed_idxs, 0],
+                                                "state": state,
                                                 "X_new": new_ref_pos[particles_failed_idxs]
                                             },
                                             indices=particles_failed_idxs,
@@ -299,8 +304,21 @@ class ParticleTrajectorySolver():
                         SpatialCoordinate(self.parent_mesh), self.particle_vom.coordinates.function_space()
                     )
                 )
+
+                self.particle_vom_updater.rebuild_vom(
+                    absorbed_vom_indices=boundary_particles_current, 
+                    new_coords=new_phys_coords,
+                    functions_to_migrate=self._fields)
+
+                topo = self.particle_vom.topology
+                print(f"[rank {self.particle_vom.comm.rank}] post-rebuild: "
+                    f"swarm local size={topo.topology_dm.getLocalSize()} "
+                    f"entity_classes={topo._entity_classes} "
+                    f"cell_set.size={self.particle_vom.cell_set.size} "
+                    f"dt_remaining={self.dt_remaining.dat.data_ro.shape} "
+                    f"X={self.particle_vom.reference_coordinates.dat.data_ro.shape}", flush=True)
+                breakpoint()
                 
-                self.particle_vom_updater.rebuild_vom(absorbed_vom_indices=boundary_particles_current, new_coords=new_phys_coords)
                 self.stepper.invalidate()
 
                 # XXX: reconsruct loop state given the new ordering
