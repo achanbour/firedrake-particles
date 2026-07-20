@@ -48,11 +48,13 @@ particle_traj_solver_params = ParticleTrajectorySolverParams(
 particle_traj_solver = ParticleTrajectorySolver(stepper, cell_crossing_solver, particle_traj_solver_params)
 
 n_before = particle_traj_solver.num_particles_local
-T_final, surviving_particle_ids = particle_traj_solver.solve(t_start, t_end)
+T_final = particle_traj_solver.solve(t_start, t_end)
 n_after = particle_traj_solver.num_particles_local
 
-# Check 1: did particles change ranks?
-print(f"[rank {comm.rank}] initially owned {n_before} particles, now owned {n_after} particles with pids {sorted(surviving_particle_ids)}",
+surviving_particle_ids = particle_vom.firedrake_particle_ids.dat.data_ro.copy()
+
+# Check 1: did particles change ranks
+print(f"[rank {comm.rank}] initially owned {n_before} particles, now owns {n_after} particles with pids {surviving_particle_ids}",
       flush=True)
 
 # Check 2: no particle left the domain

@@ -11,8 +11,6 @@ from particle_logger import ParticleLogger
 from exceptions import ParticleCrossingLoopNotConverged
 from particle_plotter import ParticlePlotterProtocol, ParticlePlotter
 
-from vtk_output import write_particle_vtk, write_pvd
-
 @dataclass
 class ParticleTrajectorySolverParams:
     bary_tol: float
@@ -55,20 +53,10 @@ class ParticleTrajectorySolver():
 
         DG0 = FunctionSpace(self.particle_vom, "DG", 0)
 
-        # TODO: Use IO VOM globalindex?
-        # Define persistent global particle IDs
-        # These are locally stored (since dat.data hold one entry per owned particle) but their values are globally unique.
-        # The don't change under VOM rebuilds; only their locations (depending on the rank the particle is currently in) 
-        # and their position in the rank sub-array according to the current numbering
-        self.pids = Function(DG0, dtype=IntType, name="particle-ids")
-        offset = self.particle_vom.comm.scan(self.num_particles_local) - self.num_particles_local # offset for current rank in global numbering
-        self.pids.dat.data_wo[:] = np.arange(offset, offset + self.num_particles_local)
-
         # Define a per-particle remainining time-step Function
         self.dt_remaining = Function(DG0, name="dt-remaining")
 
-        self._fields = (self.pids, self.dt_remaining, *self.stepper.fields)
-
+        self._fields = (self.dt_remaining, *self.stepper.fields)
 
     @property
     def num_particles_local(self):
@@ -122,11 +110,13 @@ class ParticleTrajectorySolver():
         if self.plotter:
             self.plotter.close()
 
-        return t_start, self.pids.dat.data_ro.copy()
+        return t_start
 
         
     def _run_inner_loop(self, dt_step):
         self.inner_loop_iter = 0
+
+        topo = self.particle_vom.topology
 
         boundary_particles_current = []
         migrating_particles_current = []
@@ -138,11 +128,11 @@ class ParticleTrajectorySolver():
         while self.inner_loop_iter < self._params.max_iters:
             dt_remaining_arr = self.dt_remaining.dat.data_ro.copy()
             dt_consumed_arr = np.zeros_like(dt_remaining_arr)
-            
-            particles_have_dt_remaining = dt_remaining_arr > self.eff_time_tol
 
-            any_remaining = self.particle_vom.comm.allreduce(any(particles_have_dt_remaining), op=MPI.LOR)
-            if not any_remaining:
+            particles_have_dt_remaining = dt_remaining_arr > self.eff_time_tol
+            local_active = bool(np.any(particles_have_dt_remaining))
+
+            if not self.particle_vom.comm.allreduce(local_active, op=MPI.LOR):
                 break
 
             self.inner_loop_iter += 1
@@ -296,8 +286,8 @@ class ParticleTrajectorySolver():
             # XXX: moved rebuild from end of outer loop iteration.
             needs_rebuild = self.particle_vom.comm.allreduce(len(boundary_particles_current) + len(migrating_particles_current)>0, op=MPI.LOR)
             if needs_rebuild:
-                # record the global IDs of particles about to be consumed whilst self.pids is still in current ordering
-                self.absorbed_pids.extend(self.pids.dat.data_ro[boundary_particles_current])                
+                # record the global IDs of particles about to be consumed whilst PID is still in current ordering
+                self.absorbed_pids.extend(self.particle_vom.firedrake_particle_ids.dat.data_ro[boundary_particles_current])
 
                 new_phys_coords = assemble(
                     interpolate(
@@ -307,10 +297,12 @@ class ParticleTrajectorySolver():
 
                 self.particle_vom_updater.rebuild_vom(
                     absorbed_vom_indices=boundary_particles_current, 
-                    new_coords=new_phys_coords,
-                    functions_to_migrate=self._fields)
+                    new_coords=new_phys_coords
+                )
+                
+                # topo._migrate_functions(self._fields)
+                topo._migrate_functions()
 
-                topo = self.particle_vom.topology
                 print(f"[rank {self.particle_vom.comm.rank}] post-rebuild: "
                     f"swarm local size={topo.topology_dm.getLocalSize()} "
                     f"entity_classes={topo._entity_classes} "
@@ -321,7 +313,7 @@ class ParticleTrajectorySolver():
                 
                 self.stepper.invalidate()
 
-                # XXX: reconsruct loop state given the new ordering
+                # Reconsruct loop state in the new ordering
                 # clear/refresh the local-sized bookkeeping arrays
                 boundary_particles_current = []
                 migrating_particles_current = []

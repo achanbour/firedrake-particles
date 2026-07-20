@@ -1,6 +1,5 @@
 from firedrake import *
 import numpy as np
-from pathlib import Path
 
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -28,7 +27,6 @@ u_expr = U0 * as_vector([sin(pi*x)*cos(pi*y),
                          -cos(pi*x)*sin(pi*y)])
 
 # Store the velocity field in a Function to plot streamlines in Paraview
-# (curves tangent to the velocity field everywhere)
 V = VectorFunctionSpace(mesh, "CG", 2)
 u_fn = Function(V, name="Velocity")
 u_fn.interpolate(u_expr)
@@ -46,7 +44,7 @@ VTKFile("output.pvd").write(u_fn)
 particle_file = VTKFile("particles.pvd")
 
 # Evaluate the velocity field at the particles
-u_at_points = Function(P0DG, name="Particle-Velocity")
+u_at_points = Function(P0DG, name="particle-velocity")
 u_at_points.interpolate(u_fn)
 
 time = 0.0

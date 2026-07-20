@@ -278,7 +278,7 @@ class VertexOnlyMeshUpdater:
         self.vom._saved_coordinate_dat_version = self.vom.coordinates.dat.dat_version
 
 
-    def rebuild_vom(self, absorbed_vom_indices, new_coords=None, functions_to_migrate=()):
+    def rebuild_vom(self, absorbed_vom_indices, new_coords=None):
         from firedrake.mesh import (
             _parent_mesh_embedding,
             _swarm_original_ordering_preserve,
@@ -518,8 +518,8 @@ class VertexOnlyMeshUpdater:
         # Refresh coordinate FSs eagerly
         coords_fs = self.vom._coordinates.function_space()
         ref_coords_fs = self.vom.reference_coordinates.function_space().topological
-        for fs in [coords_fs, ref_coords_fs]:
-            fs.refresh_shared_data()
+        # for fs in [coords_fs, ref_coords_fs]:
+        #     fs.refresh_shared_data()
 
         # Rebuild coordinate data using fresh sections
         coords_data = dmcommon.reordered_coords(swarm, coords_fs.dm.getDefaultSection(),
@@ -546,28 +546,5 @@ class VertexOnlyMeshUpdater:
         else:
             # This should have been already set to None when the VOM was first constructed
             self.vom.reference_coordinates = None
-
-        self._rebuild_functions(functions_to_migrate)
-
-    def _rebuild_functions(self, functions):
-            """Migrate the given set of Functions to match the new VOM topology."""
-            for f in functions:
-                f._match_mesh_topology_version()
-
-
-    # def _rebuild_functions(self):
-    #         """Eagerly migrate every live Function on the VOM to the new topology."""
-    #         registry = getattr(self.vom.topology, "_live_functions", None)
-            
-    #         if registry is None:
-    #             raise RuntimeError(
-    #             "VOM live Function registry not found: could not migrate Functions defined on the VOM."
-    #         )
-            
-    #         for key in sorted(registry.keys()):
-    #             f = registry.get(key)
-    #             print(f"[rank {self.vom.comm.rank}] migrating function ({key}, {f.name()})")
-    #             if f is not None:
-    #                 f._match_mesh_topology_version()
 
             

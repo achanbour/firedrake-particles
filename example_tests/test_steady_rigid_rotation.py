@@ -89,7 +89,10 @@ init_pos = particle_vom.coordinates.dat.data_ro.copy()
 radius_monitor(t_start, particle_traj_solver)
 
 
-T_final, surviving_particle_ids = particle_traj_solver.solve(t_start, t_end)
+T_final = particle_traj_solver.solve(t_start, t_end)
+
+# Surviving particles (after solve)
+surviving_particle_ids = particle_vom.firedrake_particle_ids.dat.data_ro.copy()
 
 # Final coordinates (after solve)
 # VOM does not get resized/redistributed so the ordering is preserved

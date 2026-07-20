@@ -68,8 +68,7 @@ class ParticleTimeStepper(ABC):
     
     @property
     def fields(self):
-        """Returns a list of persistent Functions owned by the stepper that must be
-        eagerly migrated during a VOM rebuild."""
+        """Returns a list of Functions owned by the stepper that must be eagerly migrated during a VOM rebuild."""
         return self._fields
 
 
