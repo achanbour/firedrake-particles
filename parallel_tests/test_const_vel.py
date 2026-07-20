@@ -51,7 +51,7 @@ n_before = particle_traj_solver.num_particles_local
 T_final = particle_traj_solver.solve(t_start, t_end)
 n_after = particle_traj_solver.num_particles_local
 
-surviving_particle_ids = particle_vom.firedrake_particle_ids.dat.data_ro.copy()
+surviving_particle_ids = particle_vom._particle_ids.dat.data_ro.copy()
 
 # Check 1: did particles change ranks
 print(f"[rank {comm.rank}] initially owned {n_before} particles, now owns {n_after} particles with pids {surviving_particle_ids}",

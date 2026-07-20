@@ -287,7 +287,7 @@ class ParticleTrajectorySolver():
             needs_rebuild = self.particle_vom.comm.allreduce(len(boundary_particles_current) + len(migrating_particles_current)>0, op=MPI.LOR)
             if needs_rebuild:
                 # record the global IDs of particles about to be consumed whilst PID is still in current ordering
-                self.absorbed_pids.extend(self.particle_vom.firedrake_particle_ids.dat.data_ro[boundary_particles_current])
+                self.absorbed_pids.extend(self.particle_vom._particle_ids.dat.data_ro[boundary_particles_current])
 
                 new_phys_coords = assemble(
                     interpolate(
