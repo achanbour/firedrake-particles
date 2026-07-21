@@ -331,16 +331,8 @@ class VertexOnlyMeshUpdater:
             reference_coords_local = self.vom.reference_coordinates.dat.data_ro.copy()
             parent_cell_nums_local =topology.cell_parent_cell_list[:n_local].copy()
 
-            # Read data from the current VOM's swarm, then reoder to match current VOM's current
-            # perm = topology._dm_renumbering.getIndices()[:n_local] # perm[cell_j] = swarm point k
-            # owned_ranks_swarm = swarm.getField("DMSwarm_rank").ravel().copy()
-            # swarm.restoreField("DMSwarm_rank")
-            # owned_ranks_local = owned_ranks_swarm[perm]
             owned_ranks_local = np.full(n_local, comm.rank)
 
-            # input_ranks_swarm = swarm.getField("inputrank").ravel().copy()
-            # swarm.restoreField("inputrank")
-            # input_ranks_local = input_ranks_swarm[perm]
             input_ranks_local = np.full(n_local, comm.rank)
 
 
@@ -354,9 +346,7 @@ class VertexOnlyMeshUpdater:
         if not is_absorbed_in_range_global:
             raise ValueError("absorbed VOM index is out of range on some rank")
 
-        # XXX: Only absorb particles that the rank owns
-        # The embedding output arrays contain all particles visible to the rank: BOTH owned and sitting in the halo bound
-        is_absorbed = np.isin(input_coords_idxs_local, absorbed_vom_indices) & (input_ranks_local == comm.rank) # mask
+        is_absorbed = np.isin(input_coords_idxs_local, absorbed_vom_indices) & (input_ranks_local == comm.rank)
         visible_mask = (parent_cell_nums_local != -1) & ~is_absorbed
         n_visible_local = int(visible_mask.sum()) 
 
@@ -388,7 +378,6 @@ class VertexOnlyMeshUpdater:
         # roots = locally owned points, leaves = ghost/halo points that are copies of roots owned by other ranks
         # This produces a directed graph from leaves -> roots across ranks
         # no halos ensure that the pair (inputrank, inputindex) uniquely identifies every point (every point is supplied by one rank only)
-
         sf = new_io_swarm.getPointSF()
         sf.setGraph(new_io_swarm.getLocalSize(), None, [])
         new_io_swarm.setPointSF(sf)
@@ -410,6 +399,16 @@ class VertexOnlyMeshUpdater:
         # This calls `realloc` behind the hood which preserves the existing n_visible entries
         # so we can move the data to the first n_visible entries and compact
         swarm.setLocalSizes(n_visible, 0)
+
+        # Update nroots in the pointSF of the main swarm POST compaction
+        # NOTE: if we had ghost points, we would need to supply for each such one (owner rank, owner's local index)
+        # where the owner's local index depends on the post-compaction ordering which is something we don't know
+        # without doing an extra communication round (each rank should ask the owner what its local index is for every ghost it holds)
+        # XXX: Ghost-free VOM is simpler to mantain - is their an advantage of having ghost VOM points?
+        sf = swarm.getPointSF()
+        sf.setGraph(n_visible, None, [])
+        # sf.setGraph(n_visible, ilocal_ghosts, remotes)
+        swarm.setPointSF(sf)
 
         # Now write back the visible entries into the compacted fields
         swarm_coords = swarm.getField("DMSwarmPIC_coor").reshape((n_visible, gdim))
@@ -462,17 +461,19 @@ class VertexOnlyMeshUpdater:
         #     swarm.restoreField("parentcellbasenum")
         #     swarm.restoreField("parentcellextrusionheight")
         
-        if new_coords is not None and comm.size > 1:
-            # Parallel: redistribute particles accross ranks because they have now ended up in different parent cells.
-            swarm.migrate(remove_sent_points=True)
+        # NOTE: No swarm.migrate needed with exclude_halos=True - the redistribution happens in the re-embedding
+        # the embedding assigns every particle to exactly one rank (DMSwarm_rank == comm.rank)
+        # if new_coords is not None and comm.size > 1:
+        #     # Parallel: redistribute particles accross ranks because they have now ended up in different parent cells.
+        #     swarm.migrate(remove_sent_points=True)
             
-            # Update the rank-local number of visible particles (post inter-rank exchange)
-            n_visible = swarm.getLocalSize()
+        #     # Update the rank-local number of visible particles (post inter-rank exchange)
+        #     n_visible = swarm.getLocalSize()
 
-            # Update nroots in the pointSF
-            sf = swarm.getPointSF()
-            sf.setGraph(n_visible, None, [])
-            swarm.setPointSF(sf)
+        #     # Update nroots in the pointSF
+        #     sf = swarm.getPointSF()
+        #     sf.setGraph(n_visible, None, [])
+        #     swarm.setPointSF(sf)
 
         # Rebuild entity renumbering on the existing topology
         topology._dm_renumbering = topology._renumber_entities(reorder=True) # PETSc IS which maps Firedrake cell j to swarm point perm[j]
