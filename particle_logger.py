@@ -115,8 +115,12 @@ class ParticleLogger:
                 values = np.atleast_1d(entry)
                 parts = []
                 for v in values:
-                    if isinstance(v, (float, np.floating)):
+                    if isinstance(v, (int, np.integer)):
+                        parts.append(str(int(v)))
+                    elif isinstance(v, (float, np.floating)):
                         parts.append(f"{v:{self.float_fmt}}")
+                    elif isinstance(v, (str, np.str_)):
+                        parts.append(str(v))
                     else:
                         parts.append(repr(v))
                 rows[k].append("   ".join(parts))

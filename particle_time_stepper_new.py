@@ -238,7 +238,7 @@ class StormerVerletStepper(ParticleTimeStepper):
         self._interp_exprs.append(self._invJ_interp)
         
         # NOTE: pre-evaluating invJ makes the below expression built entirely out of DG0 Functions living on the VOM.
-        # The assembly then becomes cheap (a pointwise kernel that's equivalent to doing numpy on dats?)
+        # The assembly then becomes cheap (a pointwise kernel that's equivalent to doing numpy on dats)
         self._v_half_ref = self._invJ_fn * self._v_half
         self._v_half_ref_interp = interpolate(self._v_half_ref, VectorFunctionSpace(particle_vom, "DG", 0))
         self._interp_exprs.append(self._v_half_ref_interp)
