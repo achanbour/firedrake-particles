@@ -75,6 +75,8 @@ class ParticleTrajectorySolver():
             self.outer_loop_iter += 1
             dt_step = min(self.stepper.dt, t_end - t_start)
             self.logger.outer_loop(self.outer_loop_iter, t_start, dt_step, t_end, self.num_particles_local)
+
+            self.stepper.begin_outer_step()
             
             # Run the inner loop to deal with crossings
             self._run_inner_loop(dt_step)
@@ -142,8 +144,7 @@ class ParticleTrajectorySolver():
             self.stepper.dt_fn.dat.zero()
             self.stepper.dt_fn.dat.data_wo[active_particles_idxs] = dt_remaining_arr[active_particles_idxs]
 
-            # Capture stepper's initial state
-            self.stepper.begin_step()
+            self.stepper.begin_substep()
 
             # Compute candidate reference positions by executing a full step
             candidate_ref_pos = self.stepper.step()

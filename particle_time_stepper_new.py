@@ -82,22 +82,10 @@ class ParticleTimeStepper(ABC):
     #     self.update_expr = self._build_update_expr()
     #     self.invalidate() # call invalidate to force parloops to be rebuilt
 
-
-    # -- Define shared helper methods
     def _sample_on_particles(self, field, tensor=False):
         FS = TensorFunctionSpace(self.particle_vom, "DG", 0) if tensor else VectorFunctionSpace(self.particle_vom, "DG", 0)
         return interpolate(field, FS)
 
-
-    def _v_pullback(self, v):
-        invJ = self._invJ_expr
-        if extract_unique_domain(v) is self.particle_vom:
-            return self._sample_on_particles(invJ, tensor=True) * v
-        else:
-            return self._sample_on_particles(invJ * v)
-
-
-    # -- Define shared core methods
     def _init_step_interp(self):
         self._step_interp = interpolate(self._update_expr, self._X.function_space())
         self._interp_exprs.append(self._step_interp)
@@ -129,7 +117,12 @@ class ParticleTimeStepper(ABC):
         self._rebuild_interp = True
 
 
-    def begin_step(self):
+    def begin_outer_step(self):
+        """Sample the physical fields used by the update at the particles' current positions.
+        Called once per outer time step and used throughout the entire inner crossing loop."""
+
+
+    def begin_substep(self):
         pass
 
 
@@ -143,30 +136,37 @@ class ParticleTimeStepper(ABC):
 
 
 class ForwardEulerStepper(ParticleTimeStepper):
-    """
-    Advance particles using the Forward Euler update.
-    """
 
     def __init__(self, particle_vom, dt, v):
         super().__init__(particle_vom, dt)
 
+        VFS = VectorFunctionSpace(particle_vom, "DG", 0)
+        TFS = TensorFunctionSpace(particle_vom, "DG", 0)
+
         if not isinstance(v, Expr):
             raise TypeError("Expected velocity to be supplied as a UFL expression.")
         
-        self._v = v
-        self._v_ref = self._v_pullback(self._v)
-        self._v_ref_fn = Function(
-            VectorFunctionSpace(particle_vom, "DG", 0),
-            name="particle-v-ref"
-        )
+        # Check if velocity is defined on the VOM or on the parent mesh
+        if extract_unique_domain(v) is self.particle_vom:
+            self._v_fn = v
+            self._v_interp = None
+        else:
+            self._v_fn = Function(VFS, name="particle-v")
+            self._v_interp = self._sample_on_particles(v)
+            self._interp_exprs.append(self._v_interp)
+    
+        # below are quantities that should be refreshed per cell frame (at the end of each inner loop iteration)
+        # -- invJ
+        self._invJ_fn = Function(TFS, name="particle-invJ")
+        self._invJ_interp = self._sample_on_particles(self._invJ_expr, tensor=True)
+        self._interp_exprs.append(self._invJ_interp)
 
-        # register fields
-        self._fields.append(self._v_ref_fn)
-        if extract_unique_domain(self._v) is self.particle_vom:
-            self._fields.append(self._v)
-
-        self._v_ref_interp = interpolate(self._v_ref, self._v_ref_fn.function_space())
+        # -- v_ref = invJ * v
+        self._v_ref_fn = Function(VFS, name="particle-v-ref")
+        self._v_ref_interp = interpolate(self._invJ_fn * self._v_fn, VFS)
         self._interp_exprs.append(self._v_ref_interp)
+
+        self._fields.extend([self._v_fn, self._invJ_fn, self._v_ref_fn])
 
         self._build_update_expr()
         self._init_step_interp()
@@ -175,17 +175,19 @@ class ForwardEulerStepper(ParticleTimeStepper):
         """X(t + dt) = X(t) + J^-1 * v * dt"""
         self._update_expr = self._X + self._dt_fn * self._v_ref_fn
 
-
-    def begin_step(self):
-        # check if interpolators have to be rebuilt
+    def begin_outer_step(self):
         self._check_interp()
-        assemble(self._v_ref_interp, tensor=self._v_ref_fn)
+        if self._v_interp is not None:
+            assemble(self._v_interp, tensor = self._v_fn)
+
+    def begin_substep(self):
+        self._check_interp()
+        assemble(self._invJ_interp, tensor=self._invJ_fn) # cross mesh
+        assemble(self._v_ref_interp, tensor=self._v_ref_fn) # pointwise on VOM (cheap)
 
     @property
     def v(self):
-        v_fn = assemble(self._sample_on_particles(self._v))
-        v_fn.rename("particle-velocity")
-        return v_fn
+        return self._v_fn
 
 
     @property
@@ -194,7 +196,6 @@ class ForwardEulerStepper(ParticleTimeStepper):
 
     
 class StormerVerletStepper(ParticleTimeStepper):
-    """Advance particles using the 3 stage Stormer-Verlet update."""
 
     def __init__(self, particle_vom, dt, a):
         super().__init__(particle_vom, dt)

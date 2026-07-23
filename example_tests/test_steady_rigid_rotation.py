@@ -51,8 +51,6 @@ particle_file = VTKFile("particles.pvd")
 
 # Define the solvers
 t_start = 0
-# t_end = 1
-# dt = 0.01
 t_end = 0.2 # equal to the period T with omega = 10*pi
 dt = 1e-3
 stepper = ForwardEulerStepper(particle_vom, dt, v_expr)
@@ -122,7 +120,7 @@ exact = c + (init_pos - c) @ R.T
 N = round((t_end - t_start) / dt)
 r_pred = r * (1 + dt**2 * omega**2) ** (N / 2) # predicted radius after n steps
 r_num  = np.linalg.norm(final_pos - c, axis=1) # actual radius
-# assert np.allclose(r_num, r_pred, rtol=1e-3), (r_num, r_pred)
+assert np.allclose(r_num, r_pred, rtol=1e-3), (r_num, r_pred)
 
 import matplotlib.pyplot as plt
 r_arr = np.array(r_hist)
@@ -139,7 +137,7 @@ plt.savefig("fe_radius_drift", dpi=300)
 ang0 = np.arctan2(init_pos[:,1]-c[1], init_pos[:,0]-c[0])
 angN = np.arctan2(final_pos[:,1]-c[1], final_pos[:,0]-c[0])
 dang = np.mod(angN - ang0, 2*np.pi)
-# assert np.allclose(dang, omega*t_end, atol=1e-6), (dang, omega*t_end)
+assert np.allclose(dang, omega*t_end, rtol=1e-3), (dang, omega*t_end)
 
 # Check 3: numerical error is O(dt)
 print("max final position error:", np.max(np.linalg.norm(final_pos - exact, axis=1)))
