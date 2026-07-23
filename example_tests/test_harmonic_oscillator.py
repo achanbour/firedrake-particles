@@ -34,7 +34,7 @@ particle_vom = VertexOnlyMesh(parent_mesh, q0)
 # -- Define the potential field
 # Harmonic potential is V(q) = 0.5 * omega**2 * (x-c)**2
 # The acceleration a is defined as a = -V'(q)
-omega = 10*np.pi
+omega = 10*np.pi # radians/unit time
 x = SpatialCoordinate(parent_mesh)
 # accel_expr = -omega**2*as_vector([x[0]-c[0], x[1]-c[1]])
 displacement = as_vector([x[0] - c[0], x[1] - c[1]])
@@ -51,10 +51,10 @@ V0 = 0.5 * omega * np.column_stack([-(init_pos[:, 1] - c[1]), init_pos[:, 0] - c
 
 # Solver setup
 t_start = 0
-# t_end = 0.2 # equal the period T with omega = 10*pi
-# dt = 1e-3 # 200 steps
-t_end = 2
-dt = 1e-2
+t_end = 0.2 # equal the period T with omega = 10*pi
+dt = 1e-3 # 200 steps
+# t_end = 2
+# dt = 1e-2
 
 stepper = StormerVerletStepper(particle_vom, dt, accel_expr)
 stepper.v.dat.data_wo[:] = V0 # assign initial velocity
@@ -139,5 +139,6 @@ plt.xlabel("t")
 plt.ylabel("(E-E0)/E0")
 plt.savefig("sv_energy_drift.png", dpi=300)
 
-# assert np.max(np.abs(E - E[0]))/E[0] < 1e-3, "energy not bounded"
+print("max (E - E[0]))/E[0]:", np.max(np.abs(E - E[0]))/E[0])
+assert np.max(np.abs(E - E[0]))/E[0] < 1e-3, "energy not bounded"
 

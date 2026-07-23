@@ -65,12 +65,12 @@ V0 = 0.5 * omega * np.column_stack([-(init_pos[:, 1] - c[1]), init_pos[:, 0] - c
 
 # Solver setup
 t_start = 0
-t_end = 0.2 # equal the period T with omega = 10*pi
-dt = 1e-3 # 200 steps
+# t_end = 0.2 # equal the period T with omega = 10*pi
+# dt = 1e-3 # 200 steps
 
-# NOTE: halve dt
-# dt = 1e-2
-# t_end = 2
+# Test with more periods...
+t_end = 2
+dt = 1e-2
 
 stepper = StormerVerletStepper(particle_vom, dt, accel_expr)
 stepper.v.dat.data_wo[:] = V0 # assign initial velocity
@@ -146,9 +146,6 @@ rT = np.linalg.norm(final_pos - c, axis=1)
 radius_drift = np.max(np.abs(rT - r0))
 print("max radius drift:", radius_drift)
 # assert radius_drift < 1e-2 * r, "radius not conserved"
-
-# NOTE: final position error matches radial divergence -> no phase error?
-
 
 # Check that the total energy of the system remains bounded throughout the simulation
 import matplotlib.pyplot as plt
