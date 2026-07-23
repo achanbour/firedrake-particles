@@ -168,7 +168,9 @@ class ForwardEulerStepper(ParticleTimeStepper):
         self._v_ref_interp = interpolate(self._invJ_fn * self._v_fn, VFS)
 
         # Register interpolation expressions + fields
-        self._interp_exprs.extend([self._v_interp, self._invJ_interp, self._v_ref_interp])
+        self._interp_exprs.extend([self._invJ_interp, self._v_ref_interp])
+        if self._v_interp is not None:
+            self._interp_exprs.append(self._v_interp)
         self._fields.extend([self._v_fn, self._invJ_fn, self._v_ref_fn])
 
         self._build_update_expr()

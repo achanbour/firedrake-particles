@@ -33,7 +33,7 @@ V = VectorFunctionSpace(particle_vom, "DG", 0, dim=particle_vom.geometric_dimens
 V_io = VectorFunctionSpace(particle_vom.input_ordering, "DG", 0, dim=particle_vom.geometric_dimension)
 v = Function(V)
 v_io = Function(V_io)
-input_velocities = np.random.normal(0.02, 0.1, size=(num_particles,2))
+input_velocities = np.random.normal(0.01, 0.03, size=(num_particles,2))
 v_io.dat.data[:] = input_velocities
 v.interpolate(v_io)
 v0_vom = v.dat.data_ro.copy()
@@ -60,11 +60,14 @@ particle_traj_solver_params = ParticleTrajectorySolverParams(
 particle_traj_solver = ParticleTrajectorySolver(stepper, cell_crossing_solver, particle_traj_solver_params)
 
 with PETSc.Log.Event("ParticleTrajectoryLoop"):
-    T_final, surviving_particle_ids = particle_traj_solver.solve(t_start, t_end)
+    T_final = particle_traj_solver.solve(t_start, t_end)
 
 print("Final particle positions: ", particle_vom.coordinates.dat.data_ro)
 
 x_final_expected = x0_vom + T_final*v0_vom
+
+surviving_particle_ids = particle_vom._particle_ids.dat.data_ro
+breakpoint()
 
 x_final_expected_survived = x_final_expected[surviving_particle_ids]
 

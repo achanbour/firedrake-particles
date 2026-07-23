@@ -6,7 +6,7 @@ from firedrake import *
 from pyop2.mpi import MPI
 from firedrake.utils import IntType
 
-from update_vom import VertexOnlyMeshUpdater
+from mutate_vom import VertexOnlyMeshUpdater
 from particle_logger import ParticleLogger
 from exceptions import ParticleCrossingLoopNotConverged
 from particle_plotter import ParticlePlotterProtocol, ParticlePlotter
@@ -99,9 +99,8 @@ class ParticleTrajectorySolver():
             )
 
 
-            # Update the VOM's coordinates with the latest coordinates
+            # Update the VOM's physical coordinates
             self.particle_vom.coordinates.dat.data_wo[:] = new_phys_coords.dat.data_ro
-
 
             t_start += dt_step
             
@@ -277,7 +276,7 @@ class ParticleTrajectorySolver():
                                             level="info")
 
             # Update the particle VOM
-            self.particle_vom_updater.update_ref_view(new_parent_cells, new_ref_pos)
+            self.particle_vom_updater.commit_reference_state(new_parent_cells, new_ref_pos)
             
             # Change dt to match the step consumed by each particle
             # self.stepper.dt_fn.dat.zero()
@@ -298,12 +297,13 @@ class ParticleTrajectorySolver():
                     )
                 )
 
+                # Update the VOM's physical coordinates
+                self.particle_vom.coordinates.dat.data_wo[:] = new_phys_coords.dat.data_ro
+ 
                 self.particle_vom_updater.rebuild_vom(
                     absorbed_vom_indices=boundary_particles_current, 
-                    new_coords=new_phys_coords
                 )
-                
-                # topo._migrate_functions(self._fields)
+
                 topo._migrate_functions()
 
                 print(f"[rank {self.particle_vom.comm.rank}] post-rebuild: "
@@ -312,7 +312,6 @@ class ParticleTrajectorySolver():
                     f"cell_set.size={self.particle_vom.cell_set.size} "
                     f"dt_remaining={self.dt_remaining.dat.data_ro.shape} "
                     f"X={self.particle_vom.reference_coordinates.dat.data_ro.shape}", flush=True)
-                breakpoint()
                 
                 self.stepper.invalidate()
 
