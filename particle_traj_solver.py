@@ -81,6 +81,8 @@ class ParticleTrajectorySolver():
             # Run the inner loop to deal with crossings
             self._run_inner_loop(dt_step)
 
+            self.stepper.finalize_outer_step()
+
             # Recompute physical coordinates
             new_phys_coords = assemble(
                 interpolate(
@@ -278,9 +280,9 @@ class ParticleTrajectorySolver():
             self.particle_vom_updater.update_ref_view(new_parent_cells, new_ref_pos)
             
             # Change dt to match the step consumed by each particle
-            self.stepper.dt_fn.dat.zero()
-            self.stepper.dt_fn.dat.data_wo[:] = dt_consumed_arr
-            self.stepper.finalize_step()
+            # self.stepper.dt_fn.dat.zero()
+            # self.stepper.dt_fn.dat.data_wo[:] = dt_consumed_arr
+            # self.stepper.finalize_step()
 
             self.dt_remaining.dat.data_wo[:] = dt_remaining_arr
 
