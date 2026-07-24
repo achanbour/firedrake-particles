@@ -51,7 +51,7 @@ V0 = 0.5 * omega * np.column_stack([-(init_pos[:, 1] - c[1]), init_pos[:, 0] - c
 
 # Solver setup
 t_start = 0
-t_end = 0.2 # equal the period T with omega = 10*pi
+t_end = 1.0 # equal the period T with omega = 10*pi
 dt = 1e-3 # 200 steps
 # t_end = 2
 # dt = 1e-2

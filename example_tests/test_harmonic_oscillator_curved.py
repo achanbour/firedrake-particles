@@ -69,8 +69,8 @@ t_start = 0
 # dt = 1e-3 # 200 steps
 
 # Test with more periods...
-t_end = 2
-dt = 1e-2
+t_end = 1.0
+dt = 1e-3
 
 stepper = StormerVerletStepper(particle_vom, dt, accel_expr)
 stepper.v.dat.data_wo[:] = V0 # assign initial velocity
