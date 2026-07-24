@@ -6,13 +6,14 @@ class EmptyVOMError(Exception):
     pass
 
 class VertexOnlyMeshUpdater:
-    def __init__(self, vom, parent_mesh):
-        if parent_mesh.extruded:
+    def __init__(self, vom):
+        self.vom = vom
+        self.parent_mesh = self.vom._parent_mesh
+
+        if self.parent_mesh.extruded:
             raise NotImplementedError(
                 "VertexOnlyMeshUpdater does not yet support VertexOnlyMeshes with an extruded parent mesh."
             )
-        self.vom = vom
-        self.parent_mesh = parent_mesh
 
 
     def commit_reference_state(self, next_parent_cells, new_refcoords):
@@ -85,7 +86,7 @@ class VertexOnlyMeshUpdater:
     # NOTE: By the time rebuild_vom is called in the loop, the VOM already holds the post-step state
     # commit_reference_state has already written the new ref. coords and updated the parent cells in the VOM
     def rebuild_vom(self, absorbed_vom_indices=None):
-        from firedrake.mesh import _dmswarm_create
+        from firedrake.mesh import VertexOnlyMeshTopology
         from firedrake.function import migrate_dg0_dat
         from firedrake.utils import IntType
         import firedrake.cython.dmcommon as dmcommon
@@ -96,10 +97,8 @@ class VertexOnlyMeshUpdater:
         topology = self.vom.topology
         
         gdim = self.vom.geometric_dimension
-        tdim = self.vom.topological_dimension
         
         parent_plex = self.parent_mesh.topology_dm
-        parent_gdim = self.parent_mesh.geometric_dimension
         parent_tdim = self.parent_mesh.topological_dimension
         
         n_local = topology.cell_set.size # number of particles owned by this rank 
@@ -140,7 +139,7 @@ class VertexOnlyMeshUpdater:
         input_ranks_local = np.full(n_local, comm.rank)
 
         # Absorb particles
-        absorbed = np.array(absorbed_vom_indices, dtype=int)
+        absorbed = np.array([] if absorbed_vom_indices is None else absorbed_vom_indices, dtype=int)
         
         # do a rank-local check: are all indices of particles to be absorbed valid?
         in_range_local = np.all((absorbed >= 0) & (absorbed < n_local)) if len(absorbed) else True
@@ -160,39 +159,8 @@ class VertexOnlyMeshUpdater:
         if n_survivors_global == 0:
             raise EmptyVOMError("All particles have left the domain (no points remaining in the VertexOnlyMesh).")
 
-        # TODO: drop the creation of a new swarm, construct the SF directly with _make_input_ordering_sf
-        ########################################################################################
-        # Build the IO swarm capturing the current VOM state
-        # NOTE: If we rewrite the IO VOM at every rebuild, then we need a way to maintain a ref. to the very first IO VOM?
-        new_io_swarm = _dmswarm_create(
-            [],
-            comm,
-            swarm,
-            coords_local,
-            plex_parent_cell_nums_local,
-            global_idxs_local,
-            reference_coords_local,
-            parent_cell_nums_local,
-            np.full(n_local, comm.rank),
-            input_ranks_local,
-            input_idxs_local,
-            None, None, # NOTE: modify for extruded meshes
-            self.parent_mesh.extruded,
-            parent_tdim,
-            parent_gdim
-        )
-
-        # Strip halos from the pointSF of the IO Swarm
-        # The point SF describes the parallel distribution of swarm points over ranks
-        # roots = locally owned points, leaves = ghost/halo points that are copies of roots owned by other ranks
-        # Setting no halos enforces the constraint that each point is supplied by one rank only
-        sf = new_io_swarm.getPointSF()
-        sf.setGraph(new_io_swarm.getLocalSize(), None, [])
-        new_io_swarm.setPointSF(sf)
-
-        topology.input_ordering_swarm = new_io_swarm
-
-        ########################################################################################
+        # NOTE: How do we maintain a ref. to the very first IO VOM?
+        topology.input_ordering_swarm = None
 
         # Mutate the current swarm in-place
         # Compact the swarm to n_survivors_local points
@@ -275,6 +243,22 @@ class VertexOnlyMeshUpdater:
         # For each plex point, they store two integers: the dof count and an offset (which happens to be the Firedrake's number of that plex point)
         topology._cell_numbering, _ = topology.create_section(entity_dofs)
         topology._vertex_numbering = topology._cell_numbering # holds for VOM only
+
+        # Build the step SF
+        e_p_map = topology.cell_closure[:, -1] # new cell -> raw swarm point
+        ilocal = np.empty_like(e_p_map)
+        if len(e_p_map):
+            cStart = e_p_map.min()
+            ilocal[e_p_map - cStart] = np.arange(len(e_p_map))
+
+        step_sf = VertexOnlyMeshTopology._make_input_ordering_sf(swarm, n_local, ilocal)
+
+        # Increment the VOM topology version
+        topology._topology_version = comm.allreduce(topology._topology_version + 1, op=MPI.MAX)
+
+        # Store the one step SF under the new topology version number
+        # maps VOM version k (new) -> VOM version k-1 (old) stored under key k
+        topology._topology_step_sfs[topology._topology_version] = step_sf
         
         # Clear the shared FS caches on the VOM
         topology._shared_data_cache.clear()
@@ -288,15 +272,8 @@ class VertexOnlyMeshUpdater:
         # (no rank keeps a ghost copy)
         assert self.vom.cell_set.size == self.vom.num_vertices(), "unexpected ghost particles"
 
-        # Increment the VOM topology version
-        topology._topology_version = comm.allreduce(topology._topology_version + 1, op=MPI.MAX)
-
-        # Store the one step SF under the new topology version number
-        # maps VOM version k (new) -> VOM version k-1 (old) stored under key k
-        topology._topology_step_sfs[topology._topology_version] = topology.input_ordering_sf
-
         # Migrate the ID field through the step SF 
-        topology._particle_ids = migrate_dg0_dat(topology._particle_ids, topology._particle_ids.function_space(), topology.input_ordering_sf)
+        topology._particle_ids = migrate_dg0_dat(topology._particle_ids, topology._particle_ids.function_space(), step_sf)
 
         # Rebuild coordinate fields
         coords_fs = self.vom._coordinates.function_space()

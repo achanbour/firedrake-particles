@@ -38,7 +38,7 @@ class ParticleTrajectorySolver():
         
         self.ref_cell = self.parent_mesh.coordinates.function_space().finat_element.cell
 
-        self.particle_vom_updater = VertexOnlyMeshUpdater(self.particle_vom, self.parent_mesh)
+        self.particle_vom_updater = VertexOnlyMeshUpdater(self.particle_vom)
 
         self.logger = ParticleLogger(level=self._params.log_level)
 
