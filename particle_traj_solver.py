@@ -1,14 +1,12 @@
 import numpy as np
-import warnings
 from dataclasses import dataclass
 
 from firedrake import *
 from pyop2.mpi import MPI
-from firedrake.utils import IntType
 
 from mutate_vom import VertexOnlyMeshUpdater
 from particle_logger import ParticleLogger
-from exceptions import ParticleCrossingLoopNotConverged
+from exceptions import ParticleCrossingLoopNotConverged, NoParticlesRemainingError
 from particle_plotter import ParticlePlotterProtocol, ParticlePlotter
 
 @dataclass
@@ -288,7 +286,7 @@ class ParticleTrajectorySolver():
             # XXX: moved rebuild from end of outer loop iteration.
             needs_rebuild = self.particle_vom.comm.allreduce(len(boundary_particles_current) + len(migrating_particles_current)>0, op=MPI.LOR)
             if needs_rebuild:
-                # record the global IDs of particles about to be consumed whilst PID is still in current ordering
+                # record the global IDs of particles about to be consumed whilst PID is still in the current VOM ordering
                 self.absorbed_pids.extend(self.particle_vom._particle_ids.dat.data_ro[boundary_particles_current])
 
                 new_phys_coords = assemble(
@@ -304,8 +302,16 @@ class ParticleTrajectorySolver():
                     absorbed_vom_indices=boundary_particles_current, 
                 )
 
+                num_particles_global = self.particle_vom.allreduce(self.particle_vom.cell_set.size, op=MPI.SUM)
+
+                if num_particles_global == 0:
+                    raise NoParticlesRemainingError(
+                        "The particle trajectory solver terminated due to no particles remaining in the domain."
+                    )
+                
                 topo._migrate_functions()
 
+                # Debug
                 print(f"[rank {self.particle_vom.comm.rank}] post-rebuild: "
                     f"swarm local size={topo.topology_dm.getLocalSize()} "
                     f"entity_classes={topo._entity_classes} "
