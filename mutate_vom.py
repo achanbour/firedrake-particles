@@ -216,6 +216,24 @@ class VertexOnlyMeshUpdater:
         # Redistribute particles accross ranks
         swarm.migrate(remove_sent_points=True)
 
+         # Reconstruct Firedrake cell numbers from the receiving rank's updated plex data
+        swarm_plex_ids = swarm.getField(cid).ravel()
+        swarm.restoreField(cid)
+
+        parent_cells_plex_ids = self.parent_mesh.topology.cell_closure[:, -1]
+        plex_to_parent_cells = {int(plex_id): parent_cell for parent_cell, plex_id in enumerate(parent_cells_plex_ids)}
+
+        new_parent_cells = np.asarray(
+            [
+                plex_to_parent_cells.get(int(plex_id))
+                for plex_id in swarm_plex_ids
+            ],
+            dtype=IntType
+        )
+        field_parent_cell_nums = swarm.getField("parentcellnum").ravel()
+        field_parent_cell_nums[:] = new_parent_cells
+        swarm.restoreField("parentcellnum")
+
         # Migrate changed the chart so we reset the swarm's pointSF
         sf = swarm.getPointSF()
         sf.setGraph(swarm.getLocalSize(), None, [])
@@ -244,9 +262,21 @@ class VertexOnlyMeshUpdater:
         topology._cell_numbering, _ = topology.create_section(entity_dofs)
         topology._vertex_numbering = topology._cell_numbering # holds for VOM only
 
-        # Build the step SF
-        e_p_map = topology.cell_closure[:, -1] # new cell -> raw swarm point
-        ilocal = np.empty_like(e_p_map)
+        # Invalidate cached topological properties
+        self._invalidate_topology_properties()
+
+        # NOTE: Every particle's DMSwarm_rank is an owner due to the handover,
+        # `remove_sent_points` sends the particle to that rank and deletes the local copy
+        # check here after caches has been cleared so `cell_set` is appropriately recomputed
+        no_ghosts_local = self.vom.cell_set.size == self.vom.num_vertices()
+        no_ghosts_global = comm.allreduce(no_ghosts_local, op=MPI.LAND)
+
+        if not no_ghosts_global:
+            raise AssertionError("Unexpected ghost points post VOM migration")
+
+        # Build the one step SF corresponding to the current rebuild
+        e_p_map = topology.cell_closure[:, -1] # maps new VOM point number -> raw DMSwarm point
+        ilocal = np.empty_like(e_p_map) # invert the `e_p_map`
         if len(e_p_map):
             cStart = e_p_map.min()
             ilocal[e_p_map - cStart] = np.arange(len(e_p_map))
@@ -262,15 +292,6 @@ class VertexOnlyMeshUpdater:
         
         # Clear the shared FS caches on the VOM
         topology._shared_data_cache.clear()
-
-        # Invalidate cached topological properties
-        # Amongst other things, this triggers a recomputation of the IO SF on next access
-        self._invalidate_topology_properties()
-        
-        # NOTE: Every particle's DMSwarm_rank is an owner due to the handover,
-        # `remove_sent_points` sends the particle to that rank and deletes the local copy
-        # (no rank keeps a ghost copy)
-        assert self.vom.cell_set.size == self.vom.num_vertices(), "unexpected ghost particles"
 
         # Migrate the ID field through the step SF 
         topology._particle_ids = migrate_dg0_dat(topology._particle_ids, topology._particle_ids.function_space(), step_sf)

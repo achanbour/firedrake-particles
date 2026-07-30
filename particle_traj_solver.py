@@ -302,7 +302,7 @@ class ParticleTrajectorySolver():
                     absorbed_vom_indices=boundary_particles_current, 
                 )
 
-                num_particles_global = self.particle_vom.allreduce(self.particle_vom.cell_set.size, op=MPI.SUM)
+                num_particles_global = self.particle_vom.comm.allreduce(self.particle_vom.cell_set.size, op=MPI.SUM)
 
                 if num_particles_global == 0:
                     raise NoParticlesRemainingError(

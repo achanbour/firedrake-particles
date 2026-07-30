@@ -53,16 +53,16 @@ n_after = particle_traj_solver.num_particles_local
 
 surviving_particle_ids = particle_vom._particle_ids.dat.data_ro.copy()
 
-# Check 1: did particles change ranks
+# Check 1: check if particles changed ranks
 print(f"[rank {comm.rank}] initially owned {n_before} particles, now owns {n_after} particles with pids {surviving_particle_ids}",
       flush=True)
 
-# Check 2: no particle left the domain
+# Check 2: check that no particle left the domain
 n_survived = comm.allreduce(len(surviving_particle_ids), op=MPI.SUM)
 assert n_survived == num_particles, f"lost particles: {n_survived} survived out of {num_particles}"
 
-# Check 3: are the final positions correct?
-# XXX: constant-velocity -> no discretisation error
+# Check 3: check the final positions against the expected solution
+# Since we use constant velocities, FE is expected to be exact so any error must be small!
 x_expected = x0_global[surviving_particle_ids] + T_final*v0
 err = np.linalg.norm(particle_vom.coordinates.dat.data_ro - x_expected, axis=1)
 max_err = comm.allreduce(err.max() if len(err) else 0.0, op=MPI.MAX)
@@ -70,4 +70,3 @@ max_err = comm.allreduce(err.max() if len(err) else 0.0, op=MPI.MAX)
 if comm.rank == 0:
     print(f"T_final={T_final}, global max position erorr = {max_err:.3e}")
     assert max_err < 1e-8, f"position error too large!"
-

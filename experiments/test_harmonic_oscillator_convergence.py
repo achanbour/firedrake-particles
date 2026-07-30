@@ -68,13 +68,15 @@ for dt in dts:
 
     particle_traj_solver = ParticleTrajectorySolver(stepper, cell_crossing_solver, particle_traj_solver_params)
 
-    T_final, surviving_particle_ids = particle_traj_solver.solve(t_start, t_end)
+    T_final = particle_traj_solver.solve(t_start, t_end)
 
     final_pos = particle_vom.coordinates.dat.data_ro
 
+    surviving_particle_ids = particle_vom._particle_ids.dat.data_ro.copy()
+
     assert len(surviving_particle_ids) == num_particles, "particles were lost at the boundary"
 
-    # Record final time error
+    # Record final position error
     a = omega * t_end
     R = np.array([[np.cos(a), -np.sin(a)], [np.sin(a), np.cos(a)]])
     exact_counterclockwise = c + (init_pos - c) @ R
@@ -83,7 +85,7 @@ for dt in dts:
     errors.append(err)
 
 # XXX: we use base log2 as the error halves at every level.
-# For an arbitrary step sequence, we'd use: p = log(e_k/e_{k+1})/log(dt_k/dt_{k+1})
+# For an arbitrary step sequence, use: p = log(e_k/e_{k+1})/log(dt_k/dt_{k+1})
 rates = np.log2(np.array(errors[:-1]) / np.array(errors[1:]))
-print("observed rates:", rates) # all rates approx. 2
+print("observed rates:", rates) # all rates are approx. 2 as expected
 
