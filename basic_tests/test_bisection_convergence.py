@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from particle_time_stepper import ForwardEulerStepper
 from particle_traj_solver import ParticleTrajectorySolver, ParticleTrajectorySolverParams
 import particle_crossing_solver
+from output_paths import experiment_results_dir
 
 """
 This experiment investigates the relation between the error of the numerical solution and the accuracy of the bisection algorithm
@@ -97,9 +98,8 @@ plt.loglog(abs_time_tols, errors, label="L2 Error")
 plt.xlabel("Absolute time tol")
 plt.ylabel("L2 error")
 plt.title("Bisection convergence")
-plot_dir = "./plots"
-os.makedirs(plot_dir, exist_ok=True)
-plt.savefig(f"{plot_dir}/bisection_error.png")
+output_dir = experiment_results_dir(__file__)
+plt.savefig(output_dir / "bisection_error.png")
 
 # NOTE:
 # - When bisection converges, the final error is of the order of at least time_tol but it also depends on bary_tol: 

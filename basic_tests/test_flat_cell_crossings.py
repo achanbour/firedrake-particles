@@ -81,4 +81,6 @@ for n, cross, err in zip(num_cells, bisection_calls, errors):
 # plt.xlabel("Mesh resolution (num cells)")
 # plt.ylabel("L2 error")
 # plt.title("Crossing error in curved cells")
-# plt.savefig("plots/crossing_error.png")
+# from output_paths import experiment_results_dir
+# output_dir = experiment_results_dir(__file__)
+# plt.savefig(output_dir / "crossing_error.png")

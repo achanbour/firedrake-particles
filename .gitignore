@@ -3,6 +3,8 @@
 .claude/
 __pycache__/
 output/
+results/*
+!results/README.md
 *.mp4
 *.pvd
 *.vtu

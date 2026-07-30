@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from particle_time_stepper import ForwardEulerStepper
 from particle_crossing_solver import BisectionSolver, BisectionSolverParams
 from particle_traj_solver import ParticleTrajectorySolver, ParticleTrajectorySolverParams
+from output_paths import experiment_results_dir
 
 """
 Circular particle trajectory using a rigid-body rotation field with constant angular speed.
@@ -46,8 +47,9 @@ V = VectorFunctionSpace(parent_mesh, "CG", 1)
 v_fn = Function(V, name="velocity").interpolate(v_expr)
 
 # ---- output ----
-VTKFile("output.pvd").write(v_fn)
-particle_file = VTKFile("particles.pvd")
+output_dir = experiment_results_dir(__file__)
+VTKFile(str(output_dir / "output.pvd")).write(v_fn)
+particle_file = VTKFile(str(output_dir / "particles.pvd"))
 
 # Define the solvers
 t_start = 0
@@ -131,7 +133,7 @@ plt.plot(t_arr, (1 + dt**2 * omega**2)**(n/2) - 1, "--", label="predicted")
 plt.xlabel("t")
 plt.ylabel("(r-r0)/r0")
 plt.legend()
-plt.savefig("fe_radius_drift", dpi=300)
+plt.savefig(output_dir / "fe_radius_drift.png", dpi=300)
 
 # Check 2: angle advanced by exactly omega*t_end
 ang0 = np.arctan2(init_pos[:,1]-c[1], init_pos[:,0]-c[0])
@@ -141,6 +143,5 @@ assert np.allclose(dang, omega*t_end, rtol=1e-3), (dang, omega*t_end)
 
 # Check 3: numerical error is O(dt)
 print("max final position error:", np.max(np.linalg.norm(final_pos - exact, axis=1)))
-
 
 

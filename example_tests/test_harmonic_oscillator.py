@@ -8,6 +8,7 @@ from pathlib import Path
 from particle_time_stepper import StormerVerletStepper
 from particle_crossing_solver import BisectionSolver, BisectionSolverParams
 from particle_traj_solver import ParticleTrajectorySolver, ParticleTrajectorySolverParams
+from output_paths import experiment_results_dir
 
 """
 This examples solves for the trajectory of particles subject to an external force derived
@@ -69,8 +70,9 @@ particle_traj_solver_params = ParticleTrajectorySolverParams(
 )
 
 # ---- output ----
-VTKFile("output.pvd").write(accel_fn)
-particle_file = VTKFile("particles.pvd")
+output_dir = experiment_results_dir(__file__)
+VTKFile(str(output_dir / "output.pvd")).write(accel_fn)
+particle_file = VTKFile(str(output_dir / "particles.pvd"))
 
 
 def total_energy(pos, vel):
@@ -137,8 +139,7 @@ E = np.array(E_hist)
 plt.plot(t_hist, (E-E[0])/E[0])
 plt.xlabel("t")
 plt.ylabel("(E-E0)/E0")
-plt.savefig("sv_energy_drift.png", dpi=300)
+plt.savefig(output_dir / "sv_energy_drift.png", dpi=300)
 
 print("max (E - E[0]))/E[0]:", np.max(np.abs(E - E[0]))/E[0])
 assert np.max(np.abs(E - E[0]))/E[0] < 1e-3, "energy not bounded"
-

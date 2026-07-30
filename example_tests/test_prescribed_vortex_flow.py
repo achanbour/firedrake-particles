@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from particle_crossing_solver import BisectionSolver
 from particle_time_stepper import ForwardEulerStepper
 from particle_traj_solver import ParticleTrajectorySolver, ParticleTrajectorySolverParams
+from output_paths import experiment_results_dir
 
 mesh = UnitSquareMesh(40, 40, quadrilateral=False)
 V = VectorFunctionSpace(mesh, "CG", 2) # velocity FS
@@ -40,8 +41,9 @@ params = ParticleTrajectorySolverParams(bary_tol=1e-9, abs_time_tol=1e-9,
 solver = ParticleTrajectorySolver(stepper, BisectionSolver(), params)
 
 # ---- output ----
-VTKFile("output.pvd").write(u_fn)
-particle_file = VTKFile("particles.pvd")
+output_dir = experiment_results_dir(__file__)
+VTKFile(str(output_dir / "output.pvd")).write(u_fn)
+particle_file = VTKFile(str(output_dir / "particles.pvd"))
 
 # Evaluate the velocity field at the particles
 u_at_points = Function(P0DG, name="particle-velocity")

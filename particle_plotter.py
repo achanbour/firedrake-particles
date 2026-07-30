@@ -1,7 +1,10 @@
+from pathlib import Path
 from typing import Protocol
-import os
+
 import matplotlib.pyplot as plt
 from firedrake.pyplot import triplot, scatter
+
+from output_paths import RESULTS_DIR
 
 class ParticlePlotterProtocol(Protocol):
     def setup(self, particle_vom, parent_mesh):
@@ -23,9 +26,9 @@ class ParticlePlotter(Protocol):
         self.x_lim = x_lim
         self.y_lim = y_lim
         if output_dir is None:
-            output_dir = "./output"
-            os.makedirs(output_dir, exist_ok=True)
-        self.output_dir = output_dir
+            output_dir = RESULTS_DIR / "particle_frames"
+        self.output_dir = Path(output_dir)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
         self.dpi = dpi
 
     def setup(self, particle_vom, parent_mesh):
@@ -43,7 +46,7 @@ class ParticlePlotter(Protocol):
         if self._sc is None:
             raise RuntimeError("")
         self._sc.set_offsets(particle_vom.coordinates.dat.data_ro)
-        plt.savefig(f"{self.output_dir}/frame_{self._frame:04d}.png", dpi=self.dpi)
+        plt.savefig(self.output_dir / f"frame_{self._frame:04d}.png", dpi=self.dpi)
         self._frame += 1
     
     def close(self):
@@ -51,7 +54,7 @@ class ParticlePlotter(Protocol):
 
 
 # Generate a movie of moving particles
-# ffmpeg -r 15 -i output/frame_%04d.png -c:v libx264 -pix_fmt yuv420p particles.mp4
+# ffmpeg -r 15 -i results/particle_frames/frame_%04d.png -c:v libx264 -pix_fmt yuv420p results/particle_frames/particles.mp4
 # use `-crf 18` for higher quality, less compression
 # Use `ls -1A | wc -l` to count generated frames in output directory
 
