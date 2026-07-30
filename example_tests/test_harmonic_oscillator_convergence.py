@@ -5,11 +5,9 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from pathlib import Path
 
-from particle_time_stepper_new import StormerVerletStepper
+from particle_time_stepper import StormerVerletStepper
 from particle_crossing_solver import BisectionSolver, BisectionSolverParams
 from particle_traj_solver import ParticleTrajectorySolver, ParticleTrajectorySolverParams
-
-from vtk_output import write_pvd, write_particle_vtk
 
 """
 This examples solves for the trajectory of particles subject to an external force derived

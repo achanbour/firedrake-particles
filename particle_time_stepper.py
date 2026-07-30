@@ -1,7 +1,8 @@
 from abc import ABC, abstractmethod
 from functools import partial
+from collections import namedtuple
 
-from firedrake.interpolation import interpolate, get_interpolator
+from firedrake.interpolation import interpolate, Interpolate, get_interpolator
 from firedrake.assemble import assemble
 from firedrake.mesh import VertexOnlyMeshTopology
 from firedrake.function import Function
@@ -12,59 +13,66 @@ from ufl.geometry import SpatialCoordinate
 from ufl.operators import inv
 from ufl.core.expr import Expr
 from ufl.domain import extract_unique_domain
+from ufl.algorithms.analysis import extract_type
 
 
 class ParticleTimeStepper(ABC):
     """
-    Abstract base class for time steppers that numerically integrate an ODE
-    describing a particle trajectory e.g., dx/dt = v.
+    Abstract base class for time steppers that numerically integrate a system of ODEs describing
+    a particle trajectory.
     """
-    def __init__(self, particle_vom, dt, v, **kwargs):
-        # NOTE: kwargs contain stepper parameter e.g., tolerances for error refinement in adapative time stepping
+    def __init__(self, particle_vom, dt, **kwargs):
+        # NOTE: kwargs is meant to contain additional stepper parameters 
+        # e.g., tolerances for error refinement in adapative time stepping
         # or Butcher tableau describing the integrator's parameters.
 
         # Validate the stepper's arguments
         if not isinstance(particle_vom.topology, VertexOnlyMeshTopology):
-            raise TypeError("Expected particles to be given as a VertexOnlyMesh.")
+            raise TypeError("Expected particles to be supplied as a VertexOnlyMesh.")
         
-        if not isinstance(v, Expr):
-            raise TypeError("Expected velocity to be given as a UFL expression.")
-
-        self.particle_vom = particle_vom
-        self._X = self.particle_vom.reference_coordinates
-
         if not isinstance(dt, float):
             raise TypeError("Expected the time step parameter to be given as a float.")
         
-        # Store the time step as a particle field
+        # Define the fields owned by the stepper
+        self.particle_vom = particle_vom
+        self._X = self.particle_vom.reference_coordinates
         self._dt = dt
+
+        x = SpatialCoordinate(self.particle_vom._parent_mesh)
+        self._invJ_expr = inv(ReferenceGrad(x)) # used for every position update
+
+        # Define a per-particle time step Function
+        # -- This will be used in the solver inner loop sub-stepping
         FS = FunctionSpace(particle_vom, "DG", 0)
         self._dt_fn = Function(FS, name="per-particle-time-step-function")
-        
-        # Register fields owned by stepper
-        self._fields = [self._dt_fn] 
 
-    @abstractmethod
-    def _build_update_expr(self):
-        """Return the UFL update expression."""
-        pass
+        self._fields = [self._dt_fn]
+
+        # Record any expressions involving interpolates that are part of the update
+        self._interp_exprs = []
+        self._rebuild_interp = False
 
 
+    # -- Define property methods
     @property
     def X(self):
         return self._X
-
 
     @property
     def dt_fn(self):
         return self._dt_fn
 
-
     @property
     def dt(self):
         return self._dt
     
-    # NOTE: Using private attributes + property methods enforce a read-only contract on fields that form the stepper's update expression.
+    @property
+    def fields(self):
+        """Returns a list of Functions owned by the stepper that must be eagerly migrated during a VOM rebuild."""
+        return self._fields
+
+
+    # NOTE: Using private attributes + property methods enforce a read-only contract on fields owned by the stepper.
     # Re-assigning the fields with a new Function (e.g., stepper.X = ...) would silently invalidate the update expr and associated cached parloops.
     # If we want to allow users to swap out the fields then this should be done via an explicit setter method:
 
@@ -74,103 +82,206 @@ class ParticleTimeStepper(ABC):
     #     self.update_expr = self._build_update_expr()
     #     self.invalidate() # call invalidate to force parloops to be rebuilt
 
+    def _sample_on_particles(self, field, tensor=False):
+        FS = TensorFunctionSpace(self.particle_vom, "DG", 0) if tensor else VectorFunctionSpace(self.particle_vom, "DG", 0)
+        return interpolate(field, FS)
 
-    def _build_step_callable(self):
-        """Build and cache the step interpolation callable."""
-        interpolation_expr = interpolate(self._update_expr, self._X.function_space()) # symbolic interpolation expr
-        self.step_callable = partial(assemble, interpolation_expr)
-        self._step_callable_is_current = True
-
-
-    def _check_step_callable_is_current(self):
-        """Rebuild the step interpolation callable."""
-        if not self._step_callable_is_current:
-            self._build_step_callable()
+    def _init_step_interp(self):
+        self._step_interp = interpolate(self._update_expr, self._X.function_space())
+        self._interp_exprs.append(self._step_interp)
 
 
-    def _rebuild_fields(self):
-        """Rebuild all fields after a VOM state change"""
-        for f in self._fields:
-            if isinstance(f, Function):
-                f._match_mesh_topology_version()
-            else:
-                raise TypeError("Cannot rebuild a field that is not a Function.")
+    @abstractmethod
+    def _build_update_expr(self):
+        """Build update expressions for each stage."""
+        pass
+    
+
+    def _reset_interpolators(self):
+        """Clear cached Interpolators so they get rebuilt against the current VOM topology.
+        Note that the symbolics of the underlying expressions remain valid."""
+        for expr in [self._update_expr, *self._interp_exprs]:
+            for node in extract_type(expr, Interpolate):
+                node.__dict__.pop("_interpolator", None)
 
 
-    # Eargerly update the fields and rebuild the symbolic interpolation expression
-    # Skip now that FS are retained and Functions are correctly resized 
+    def _check_interp(self):
+        """Check if interpolators need to be rebuilt"""
+        if self._rebuild_interp:
+            self._reset_interpolators()
+            self._rebuild_interp = False
+
+
     def invalidate(self):
-        """Mark all callables as stale."""
-        self._rebuild_fields()
-        self._step_callable_is_current = False
+        """Mark all interpolators as stale -> need to be rebuilt"""
+        self._rebuild_interp = True
+
+
+    def begin_outer_step(self):
+        """Sample the physical fields used by the update at the particles' current positions.
+        Called once per outer time step and used throughout the entire inner crossing loop."""
+
+
+    def begin_substep(self):
+        pass
+
+
+    def finalize_outer_step(self):
+        pass
 
 
     def step(self):
-        self._check_step_callable_is_current()
-        result = self.step_callable() # assemble the cached interpolation
-        return result
+        res = assemble(self._step_interp)
+        return res
 
 
 class ForwardEulerStepper(ParticleTimeStepper):
-    """
-    Advance particles using the explicit Euler update:
-
-    X(t + dt) = X(t) + J^-1 * v * dt
-
-    where J is the Jacobian of the geometric map from reference space to physical space F: X -> x
-    used to pull the velocity field back to reference space.
-    """
 
     def __init__(self, particle_vom, dt, v):
-        super().__init__(particle_vom, dt, v)
+        super().__init__(particle_vom, dt)
 
-        # Define any additional fields owned by the stepper
-        x = SpatialCoordinate(self.particle_vom._parent_mesh)
-        self._invJ_expr = inv(ReferenceGrad(x))
+        # Validate inputs
+        if not isinstance(v, Expr):
+            raise TypeError("Expected velocity to be supplied as a UFL expression.")
         
-        self._v = v
-
+        if not isinstance(dt, float):
+            raise TypeError("Expected dt to be supplied as a float")
+        
+        VFS = VectorFunctionSpace(particle_vom, "DG", 0)
+        TFS = TensorFunctionSpace(particle_vom, "DG", 0)
+        
+        # Check if velocity is defined on the VOM or on the parent mesh
         if extract_unique_domain(v) is self.particle_vom:
-            # Appending to self._fields ensures that Functions get resized appropriately to match the new topology
-            self._fields.append(self._v)
-
-        # Define and store the symbolic expression for v_ref to be used in the update expression
-        # NOTE: The FS defined on the particle VOM may become stale when the particle VOM gets rebuilt!
-        # Registering the fields ensures their underlying FS get rebuilt, and therefore that the target space in the interpolation
-        # is always defined on the latest VOM.
-
-        if extract_unique_domain(self._v) is self.particle_vom:
-            TFS = TensorFunctionSpace(self.particle_vom, "DG", 0)
-            # self._v_ref = interpolate(self._invJ_expr, TFS) * self._v
-            self.invJ_fn = Function(TFS)
-            self._fields.append(self.invJ_fn)
-            self._v_ref = interpolate(self._invJ_expr, self.invJ_fn.function_space()) * self._v
+            self._v_fn = v
+            self._v_interp = None
         else:
-            VFS = VectorFunctionSpace(self.particle_vom, "DG", 0)
-            # self._v_ref = interpolate(self._invJ_expr * self._v, VFS)
-            self._v_ref_fn = Function(VFS)
-            self._fields.append(self._v_ref_fn)
-            self._v_ref = interpolate(self._invJ_expr * self._v, self._v_ref_fn.function_space())
-        
-        self._build_update_expr()
-        self._build_step_callable()
+            self._v_fn = Function(VFS, name="particle-v")
+            self._v_interp = self._sample_on_particles(v)
+    
+        # Define quantities that should be refreshed per cell frame
+        # -- invJ
+        self._invJ_fn = Function(TFS, name="particle-invJ")
+        self._invJ_interp = self._sample_on_particles(self._invJ_expr, tensor=True)
 
+        # -- v_ref = invJ * v
+        self._v_ref_fn = Function(VFS, name="particle-v-ref")
+        self._v_ref_interp = interpolate(self._invJ_fn * self._v_fn, VFS)
+
+        # Register interpolation expressions + fields
+        self._interp_exprs.extend([self._invJ_interp, self._v_ref_interp])
+        if self._v_interp is not None:
+            self._interp_exprs.append(self._v_interp)
+        self._fields.extend([self._v_fn, self._invJ_fn, self._v_ref_fn])
+
+        self._build_update_expr()
+        self._init_step_interp()
 
     def _build_update_expr(self):
-        self._update_expr = self._X + self._v_ref * self._dt_fn
+        """X(t + dt) = X(t) + J^-1 * v * dt"""
+        self._update_expr = self._X + self._dt_fn * self._v_ref_fn
+
+    def begin_outer_step(self):
+        self._check_interp()
+        if self._v_interp is not None:
+            assemble(self._v_interp, tensor = self._v_fn)
+
+    def begin_substep(self):
+        self._check_interp()
+        assemble(self._invJ_interp, tensor=self._invJ_fn) # cross mesh -> current cell
+        assemble(self._v_ref_interp, tensor=self._v_ref_fn) # pointwise on VOM (cheap)
 
     @property
     def v(self):
-        return self._v
-    
-    # TODO: Cache the result from step and reuse
+        return self._v_fn
+
+
     @property
     def v_ref(self):
-        return assemble(interpolate(self._v_ref, self.particle_vom.coordinates.function_space()))
-    
+        return self._v_ref_fn
+
 
 class StormerVerletStepper(ParticleTimeStepper):
-    """
-    Advance particles using the Stormer-Verlet update
-    """
-    pass
+
+    def __init__(self, particle_vom, dt, a):
+        super().__init__(particle_vom, dt)
+        
+        # Validation
+        if not isinstance(a, Expr):
+            raise TypeError("Expected acceleration to be supplied as a UFL expression.")
+        
+        self._a = a # physical acceleration -grad(phi)
+
+        VFS = VectorFunctionSpace(particle_vom, "DG", 0)
+        TFS = TensorFunctionSpace(particle_vom, "DG", 0)
+
+        # Record acceleration at both the start and end of a time step
+        self._a_start_fn = Function(VFS, name="particle-accel-start")
+        self._a_end_fn = Function(VFS, name="particle-accel-end")
+        self._a_interp = interpolate(self._a, VFS)
+
+        # Record velocity
+        self._v_fn = Function(VFS, name="particle-v") # evolving state
+        self._v_half_fn = Function(VFS, name="particle-v-half") # v^{n+1/2}
+        
+        # Define quantities that should be refreshed per cell frame
+        # -- invJ
+        self._invJ_fn = Function(TFS, name="particle-invJ")
+        self._invJ_interp = self._sample_on_particles(self._invJ_expr, tensor=True)
+        self._interp_exprs.append(self._invJ_interp)
+
+        # -- v_half_ref = invJ * v_half
+        self._v_half_ref_fn = Function(VFS, name="particle-v-half-ref")
+        self._v_half_ref_interp = interpolate(self._invJ_fn * self._v_half_fn, VFS)
+
+        # Register interpolation expressions + fields
+        self._interp_exprs.extend([self._a_interp, self._invJ_interp, self._v_half_ref_interp])
+        self._fields.extend([self._a_start_fn, self._a_end_fn, self._v_fn, self._v_half_fn, self._v_half_ref_fn, self._invJ_fn])        
+
+        self._build_update_expr()
+        self._init_step_interp()
+
+
+    def _build_update_expr(self):
+        """X(t + dt) = X(t) + dt * J^-1 * (v + dt/2 * a_start)"""
+        self._update_expr = self._X + self._dt_fn * self._v_half_ref_fn # compute X^{n+1} using V_ref^{n+1/2}
+    
+    def begin_outer_step(self):
+        self._check_interp
+        assemble(self._a_interp, tensor=self._a_start_fn)
+        self._v_half_fn.assign(self._v_fn + 0.5 * self._dt * self._a_start_fn)
+
+
+    def begin_substep(self):
+        self._check_interp()
+        assemble(self._invJ_interp, tensor=self._invJ_fn) # cross-mesh -> current cell
+        assemble(self._v_half_ref_interp, tensor=self._v_half_ref_fn) # pointwise on VOM
+
+
+    def finalize_outer_step(self):
+        assemble(self._a_interp, tensor=self._a_end_fn)                   
+        self._v_fn.assign(self._v_fn + 0.5*self._dt*(self._a_start_fn + self._a_end_fn))
+
+    
+    @property
+    def v(self):
+        return self._v_fn
+
+    
+    @property
+    def v_ref(self):
+        return self._v_half_ref_fn
+
+    
+    
+
+
+
+
+
+    
+
+
+
+
+
+        
