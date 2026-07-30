@@ -148,8 +148,10 @@ stokes_solver = StokesSolver(
     transpose_nullspace=Z_nullspace,
 )
 
+# NOTE: setting dt_particles to inf makes the trajectory solver use the adaptive PDE time window to advect particles
 stepper = ForwardEulerStepper(particle_vom, np.inf, u)
 
+# Below we explicitly set a separate timestep for particles
 # dt_p = 1e-4
 # stepper = ForwardEulerStepper(particle_vom, dt_p, u)
 
@@ -167,11 +169,6 @@ particle_traj_solver = ParticleTrajectorySolver(
   particle_traj_solver_params,
 )
 
-# set up vtu output directory
-particle_vtu_dir = output_dir / "particles"
-particle_vtu_dir.mkdir(exist_ok=True)
-particle_file_base = str(particle_vtu_dir / "particles_{}.vtu")
-
 # Sample velocity at particles
 u_at_points = Function(P0DG_dim2, name="particle-velocity")
 u_at_points.interpolate(z.subfunctions[0])
@@ -180,7 +177,7 @@ for timestep in range(0, timesteps):
     # Write output:
     if timestep % output_frequency == 0:
         output_file.write(*z.subfunctions, T)
-        particle_file.write(u_at_points, time=timestep)
+        particle_file.write(u_at_points)
 
     dt = t_adapt.update_timestep()
     time_start = time
