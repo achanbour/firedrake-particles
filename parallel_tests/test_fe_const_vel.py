@@ -18,11 +18,10 @@ num_particles = 10
 y_line = np.linspace(0.15, 0.85, num_particles)
 x0 = np.column_stack([np.full(num_particles, 0.25), y_line])
 
-# XXX: redundant=True otherwise each rank must supply its own set of particles
+# Set redundant=True otherwise each rank must supply its own set of particles
 particle_vom = VertexOnlyMesh(parent_mesh, x0)
 
 # Constant velocity (same on all ranks)
-# XXX: no need to go through IO VOM on initial assign
 v0 = np.array([0.05, 0.0])
 V = VectorFunctionSpace(particle_vom, "DG", 0)
 v = Function(V, name="particle-velocity")
@@ -43,7 +42,7 @@ particle_traj_solver_params = ParticleTrajectorySolverParams(
     abs_time_tol=1e-9,
     rel_time_tol=0,
     max_iters=50,
-    plot=False # XXX: check if plotting works in parallel?
+    plot=False # XXX: Firedrake's built-in plotting routines don't work in parallel?
 )
 particle_traj_solver = ParticleTrajectorySolver(stepper, cell_crossing_solver, particle_traj_solver_params)
 
