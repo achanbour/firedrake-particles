@@ -177,7 +177,7 @@ class ParticleTrajectorySolver():
                                             indices=particles_passed_idxs, 
                                             level="info")
             
-            parent_cells = self.particle_vom.topology.cell_parent_cell_list.copy()[:self.num_particles_local].copy()
+            parent_cells = self.particle_vom.topology.cell_parent_cell_list[:self.num_particles_local].copy()
             new_parent_cells = parent_cells.copy()
         
             # Process failed particles
@@ -237,13 +237,13 @@ class ParticleTrajectorySolver():
 
                 # Identify the neighbouring cell for each particle and compute its reference coordinates in that new cell
                 for i, pid_local in enumerate(particles_failed_idxs):
-                    parent_cell = parent_cells[pid_local, 0]
+                    parent_cell = parent_cells[pid_local]
                     crossed_edge = crossed_edge_idxs[particles_failed_active_idxs[i]]
                     next_cell = self.parent_mesh.topology.cell_facet_neighbours.data_ro_with_halos[parent_cell, crossed_edge]
 
                     if next_cell != -1:
                         # Owned or ghost -> transfer and keep stepping
-                        new_parent_cells[pid_local, 0] = next_cell
+                        new_parent_cells[pid_local] = next_cell
                         A_facet, b_facet = self.parent_mesh.topology.cell_facet_coord_transforms
                         new_ref_pos[pid_local] = A_facet.data_ro_with_halos[parent_cell, crossed_edge] @ X_cross[i] + b_facet.data_ro_with_halos[parent_cell, crossed_edge]
                         if next_cell < self.particle_vom.cell_set.size:

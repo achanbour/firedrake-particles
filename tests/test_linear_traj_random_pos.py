@@ -67,12 +67,10 @@ print("Final particle positions: ", particle_vom.coordinates.dat.data_ro)
 x_final_expected = x0_vom + T_final*v0_vom
 
 surviving_particle_ids = particle_vom._particle_ids.dat.data_ro
-breakpoint()
-
 x_final_expected_survived = x_final_expected[surviving_particle_ids]
 
 print("Exact final particle positions: ", x_final_expected_survived)
-print("Error: ", np.linalg.norm(x_final_expected_survived - particle_vom.coordinates.dat.data_ro, axis=1))
+print("Max error: ", max(np.linalg.norm(x_final_expected_survived - particle_vom.coordinates.dat.data_ro, axis=1)))
 
 # print(
 #     f"Exact results matched up to bary_tol={bary_tol}: \
