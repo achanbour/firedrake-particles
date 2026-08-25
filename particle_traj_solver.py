@@ -74,7 +74,7 @@ class ParticleTrajectorySolver():
             dt_step = min(self.stepper.dt, t_end - t_start)
             self.logger.outer_loop(self.outer_loop_iter, t_start, dt_step, t_end, self.num_particles_local)
 
-            self.stepper.begin_outer_step()
+            self.stepper.begin_outer_step(dt_step)
             
             # Run the inner loop to deal with crossings
             self._run_inner_loop(dt_step)
@@ -128,7 +128,6 @@ class ParticleTrajectorySolver():
 
         while self.inner_loop_iter < self._params.max_iters:
             dt_remaining_arr = self.dt_remaining.dat.data_ro.copy()
-            dt_consumed_arr = np.zeros_like(dt_remaining_arr)
 
             particles_have_dt_remaining = dt_remaining_arr > self.eff_time_tol
             local_active = bool(np.any(particles_have_dt_remaining))
@@ -164,7 +163,6 @@ class ParticleTrajectorySolver():
 
             # Process passed particles
             if len(particles_passed_idxs) > 0:
-                dt_consumed_arr[particles_passed_idxs] = dt_remaining_arr[particles_passed_idxs]
                 dt_remaining_arr[particles_passed_idxs] = 0
 
                 # Register coordinates
@@ -193,8 +191,6 @@ class ParticleTrajectorySolver():
                     bary_tol=self._params.bary_tol,
                     time_tol=self.eff_time_tol,
                 )
-
-                dt_consumed_arr[particles_failed_idxs] = t_cross 
 
                 # Decrement dt_remaining by t_cross
                 dt_remaining_arr[particles_failed_idxs] -= t_cross
@@ -275,11 +271,7 @@ class ParticleTrajectorySolver():
 
             # Update the particle VOM
             self.particle_vom_updater.commit_reference_state(new_parent_cells, new_ref_pos)
-            
-            # Change dt to match the step consumed by each particle
-            # self.stepper.dt_fn.dat.zero()
-            # self.stepper.dt_fn.dat.data_wo[:] = dt_consumed_arr
-            # self.stepper.finalize_step()
+    
 
             self.dt_remaining.dat.data_wo[:] = dt_remaining_arr
 

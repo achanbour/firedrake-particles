@@ -32,11 +32,12 @@ class ParticleTimeStepper(ABC):
         
         if not isinstance(dt, float):
             raise TypeError("Expected the time step parameter to be given as a float.")
-        
-        # Define the fields owned by the stepper
+
+        self._dt = dt # user-assigned step size (float)
+        self._dt_step = dt # size of the outer step currently in progress
+
         self.particle_vom = particle_vom
         self._X = self.particle_vom.reference_coordinates
-        self._dt = dt
 
         x = SpatialCoordinate(self.particle_vom._parent_mesh)
         self._invJ_expr = inv(ReferenceGrad(x)) # used for every position update
@@ -65,7 +66,11 @@ class ParticleTimeStepper(ABC):
     @property
     def dt(self):
         return self._dt
-    
+
+    @property
+    def dt_step(self):
+        return self._dt_step
+
     @property
     def fields(self):
         """Returns a list of Functions owned by the stepper that must be eagerly migrated during a VOM rebuild."""
@@ -117,9 +122,14 @@ class ParticleTimeStepper(ABC):
         self._rebuild_interp = True
 
 
-    def begin_outer_step(self):
+    def begin_outer_step(self, dt_step=None):
         """Sample the physical fields used by the update at the particles' current positions.
-        Called once per outer time step and used throughout the entire inner crossing loop."""
+        Called once per outer time step and used throughout the entire inner crossing loop.
+        `dt_step` is the step actually being taken, which may be shorter than the user-assigned 
+        time step `self.dt` - namely, when the final step is truncated at `t_end`.
+        """
+        self._dt_step = self._dt if dt_step is None else float(dt_step)
+
 
 
     def begin_substep(self):
@@ -180,7 +190,8 @@ class ForwardEulerStepper(ParticleTimeStepper):
         """X(t + dt) = X(t) + J^-1 * v * dt"""
         self._update_expr = self._X + self._dt_fn * self._v_ref_fn
 
-    def begin_outer_step(self):
+    def begin_outer_step(self, dt_step=None):
+        super().begin_outer_step(dt_step)
         self._check_interp()
         if self._v_interp is not None:
             assemble(self._v_interp, tensor = self._v_fn)
@@ -227,7 +238,6 @@ class StormerVerletStepper(ParticleTimeStepper):
         # -- invJ
         self._invJ_fn = Function(TFS, name="particle-invJ")
         self._invJ_interp = self._sample_on_particles(self._invJ_expr, tensor=True)
-        self._interp_exprs.append(self._invJ_interp)
 
         # -- v_half_ref = invJ * v_half
         self._v_half_ref_fn = Function(VFS, name="particle-v-half-ref")
@@ -245,10 +255,11 @@ class StormerVerletStepper(ParticleTimeStepper):
         """X(t + dt) = X(t) + dt * J^-1 * (v + dt/2 * a_start)"""
         self._update_expr = self._X + self._dt_fn * self._v_half_ref_fn # compute X^{n+1} using V_ref^{n+1/2}
     
-    def begin_outer_step(self):
-        self._check_interp
+    def begin_outer_step(self, dt_step=None):
+        super().begin_outer_step(dt_step)
+        self._check_interp()
         assemble(self._a_interp, tensor=self._a_start_fn)
-        self._v_half_fn.assign(self._v_fn + 0.5 * self._dt * self._a_start_fn)
+        self._v_half_fn.assign(self._v_fn + 0.5 * self._dt_step * self._a_start_fn)
 
 
     def begin_substep(self):
@@ -259,7 +270,7 @@ class StormerVerletStepper(ParticleTimeStepper):
 
     def finalize_outer_step(self):
         assemble(self._a_interp, tensor=self._a_end_fn)                   
-        self._v_fn.assign(self._v_fn + 0.5*self._dt*(self._a_start_fn + self._a_end_fn))
+        self._v_fn.assign(self._v_fn + 0.5*self._dt_step*(self._a_start_fn + self._a_end_fn))
 
     
     @property

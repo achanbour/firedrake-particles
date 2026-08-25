@@ -23,8 +23,8 @@ class BisectionSolverParams:
 
 BISECTION_COUNT = 0
 class BisectionSolver(CellCrossingSolver):
-    def __init__(self, params: BisectionSolverParams = BisectionSolverParams):
-        self._params = params
+    def __init__(self, params: BisectionSolverParams | None = None):
+        self._params = BisectionSolverParams if params is None else params
 
     
     def solve(self, stepper, ref_cell, crossing_particle_idxs, crossing_particle_dt, bary_tol, time_tol):
@@ -79,6 +79,7 @@ class BisectionSolver(CellCrossingSolver):
         return t_cross, X_cross, bary_cross
 
 
+# TODO
 class LineIntersectionSolver(CellCrossingSolver):
     def solve(self, stepper, ref_cell, crossing_particle_idxs, crossing_particle_dt):
         X_start = stepper.X.dat.data_ro[crossing_particle_idxs]
