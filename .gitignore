@@ -1,3 +1,13 @@
 .DS_Store
 .vscode/
+.claude/
 __pycache__/
+output/
+results/*
+!results/README.md
+*.mp4
+*.pvd
+*.vtu
+*.png
+CLAUDE.md
+DEBUG_NOTES.md

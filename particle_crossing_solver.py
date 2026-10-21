@@ -1,0 +1,109 @@
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+import numpy as np
+from exceptions import BisectionNotConvergedError
+from pyop2.mpi import MPI
+
+class CellCrossingSolver(ABC):
+    """
+    Abstract base class for solvers used to detect particle collisions with mesh entities.
+    """
+    
+    @abstractmethod
+    def solve(self, stepper, ref_cell, particle_idxs, particle_dt):
+        """Solves for the time at which each particle exited its current cell as well as
+        for its position at the crossing point."""
+        pass
+
+
+@dataclass
+class BisectionSolverParams:
+    max_iters: int=30
+
+
+BISECTION_COUNT = 0
+class BisectionSolver(CellCrossingSolver):
+    def __init__(self, params: BisectionSolverParams | None = None):
+        self._params = BisectionSolverParams() if params is None else params
+
+    
+    def solve(self, stepper, ref_cell, crossing_particle_idxs, crossing_particle_dt, bary_tol, time_tol):
+        global BISECTION_COUNT
+        BISECTION_COUNT += 1
+        num_particles = len(crossing_particle_idxs)
+
+        comm = stepper.particle_vom.comm
+        
+        # Initialise the bisection bracket for each particle
+        t_lo = np.zeros(num_particles, dtype=float)
+        t_hi = crossing_particle_dt.copy()
+        
+        for _ in range(self._params.max_iters):
+            t_mid = (t_lo + t_hi) / 2
+            
+            # Advance particles by the midpoint of their current bisection bracket
+            stepper.dt_fn.dat.zero()
+            stepper.dt_fn.dat.data_wo[crossing_particle_idxs] = t_mid
+            
+            particle_pos_mid = stepper.step()
+            X_mid = particle_pos_mid.dat.data[crossing_particle_idxs]
+            bary_mid = ref_cell.compute_barycentric_coordinates(X_mid)
+
+            # Evaluate the boolean predicate
+            # For particles inside at the midpoint: advance the lower end of the bracket
+            # For particles outside at the midpoint: advance the higher end of the bracket
+            inside = np.all(bary_mid >= -bary_tol, axis=1)
+            t_lo[inside] = t_mid[inside]
+            t_hi[~inside] = t_mid[~inside]
+
+            # Declare convergence if all brackets have sufficiently shrunk
+            local_max = np.max(t_hi - t_lo) if len(t_hi) > 0 else 0.0
+            if comm.allreduce(local_max, op=MPI.MAX) < time_tol:
+                break
+        else:
+            raise BisectionNotConvergedError(
+                f"Bisection failed to converge within {self._params.max_iters} iterations using time_tol={time_tol}"
+            )
+        
+        # Extract crossing times
+        # In bisection terms, this corresponds to the last time the the boolean predicate was True (i.e., the particle was inside)
+        t_cross = t_lo
+
+        # Compute the position of each particle at the crossing point
+        stepper.dt_fn.dat.zero()
+        stepper.dt_fn.dat.data_wo[crossing_particle_idxs] = t_cross
+        particle_pos_cross = stepper.step()
+        X_cross = particle_pos_cross.dat.data_ro[crossing_particle_idxs]
+        bary_cross = ref_cell.compute_barycentric_coordinates(X_cross)
+
+        return t_cross, X_cross, bary_cross
+
+
+# FIXME for unstructured meshes -> non-affine change of coords
+class LineIntersectionSolver(CellCrossingSolver):
+    def solve(self, stepper, ref_cell, crossing_particle_idxs, crossing_particle_dt):
+        X_start = stepper.X.dat.data_ro[crossing_particle_idxs]
+        v = stepper.v_ref.dat.data_ro[crossing_particle_idxs]
+
+        # Compute barycentric coordinates at the start and end
+        X_end = X_start + v * crossing_particle_dt[:, None]
+        bary_start = ref_cell.compute_barycentric_coordinates(X_start)
+        bary_end = ref_cell.compute_barycentric_coordinates(X_end)
+
+        # For each particle, solve lambda(t) = 0 where
+        # lambda(t) = lambda(0) + t*(lambda(dt) - lambda(0)/dt
+
+        d_bary = bary_end - bary_start
+        dt = crossing_particle_dt[:, None]
+        t_face = np.where(d_bary < 0, -dt * bary_start / d_bary,  np.inf,)
+        t_face = np.where((t_face >= 0) & (t_face <= dt), t_face, np.inf)
+        t_cross = np.min(t_face, axis=1)
+
+        X_cross = X_start + t_cross[:, None] * v
+        bary_cross = ref_cell.compute_barycentric_coordinates(X_cross)
+
+        return t_cross, X_cross, bary_cross
+
+
+class NewtonSolver(CellCrossingSolver):
+    pass
