@@ -24,7 +24,7 @@ class BisectionSolverParams:
 BISECTION_COUNT = 0
 class BisectionSolver(CellCrossingSolver):
     def __init__(self, params: BisectionSolverParams | None = None):
-        self._params = BisectionSolverParams if params is None else params
+        self._params = BisectionSolverParams() if params is None else params
 
     
     def solve(self, stepper, ref_cell, crossing_particle_idxs, crossing_particle_dt, bary_tol, time_tol):
@@ -79,7 +79,7 @@ class BisectionSolver(CellCrossingSolver):
         return t_cross, X_cross, bary_cross
 
 
-# TODO
+# FIXME for unstructured meshes -> non-affine change of coords
 class LineIntersectionSolver(CellCrossingSolver):
     def solve(self, stepper, ref_cell, crossing_particle_idxs, crossing_particle_dt):
         X_start = stepper.X.dat.data_ro[crossing_particle_idxs]
@@ -95,8 +95,8 @@ class LineIntersectionSolver(CellCrossingSolver):
 
         d_bary = bary_end - bary_start
         dt = crossing_particle_dt[:, None]
-        t_face = np.where(d_bary < 0, dt * bary_start/d_bary, np.inf)
-        t_face = np.where((t_cross >= 0) & (t_cross <= dt), t_cross, np.inf)
+        t_face = np.where(d_bary < 0, -dt * bary_start / d_bary,  np.inf,)
+        t_face = np.where((t_face >= 0) & (t_face <= dt), t_face, np.inf)
         t_cross = np.min(t_face, axis=1)
 
         X_cross = X_start + t_cross[:, None] * v

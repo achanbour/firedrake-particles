@@ -37,7 +37,7 @@ input_velocities = np.random.normal(0.01, 0.03, size=(num_particles,2))
 v_io.dat.data[:] = input_velocities
 v.interpolate(v_io)
 v0_vom = v.dat.data_ro.copy()
-print("Initial particle velocities: ", v)
+print("Initial particle velocities: ", v0_vom)
 
 
 # Define solvers

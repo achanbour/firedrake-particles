@@ -2,32 +2,32 @@ import numpy as np
 from dataclasses import dataclass
 
 from firedrake import *
+from firedrake.vertexonly_mutation import VertexOnlyMeshMutator
 from pyop2.mpi import MPI
 
-from mutate_vom import VertexOnlyMeshUpdater
 from particle_logger import ParticleLogger
 from exceptions import ParticleCrossingLoopNotConverged, NoParticlesRemainingError
 from particle_plotter import ParticlePlotterProtocol, ParticlePlotter
 
 @dataclass
 class ParticleTrajectorySolverParams:
-    bary_tol: float
-    abs_time_tol: float
-    rel_time_tol: float
-    max_iters: int
-    log_level: str="info"
-    plot: bool=False
+    bary_tol: float = 1e-9
+    abs_time_tol: float = 1e-9
+    rel_time_tol: float = 0.0
+    max_iters: int = 50
+    log_level: str = "info"
+    plot: bool = False
 
 class ParticleTrajectorySolver():
-    def __init__(self, stepper, cell_crossing_solver, params: ParticleTrajectorySolverParams, plotter: ParticlePlotterProtocol = None, monitor=None):
+    def __init__(self, stepper, cell_crossing_solver, params: ParticleTrajectorySolverParams | None = None, plotter: ParticlePlotterProtocol = None, monitor=None):
+        self._params = ParticleTrajectorySolverParams() if params is None else params
+        
         # NOTE: velocity could be a function of time so we may need to pass time params
         # Currently this is achieved by running solve over one outer step [0, dt]
 
         self.stepper = stepper
         self.cell_crossing_solver = cell_crossing_solver
-        
-        self._params = params
-
+    
         # NOTE: If dt changes across time steps, then consider moving this to solve()
         self.eff_time_tol = max(self._params.abs_time_tol, self._params.rel_time_tol * self.stepper.dt)
 
@@ -36,13 +36,13 @@ class ParticleTrajectorySolver():
         
         self.ref_cell = self.parent_mesh.coordinates.function_space().finat_element.cell
 
-        self.particle_vom_updater = VertexOnlyMeshUpdater(self.particle_vom)
+        self.particle_vom_updater = VertexOnlyMeshMutator(self.particle_vom)
 
         self.logger = ParticleLogger(level=self._params.log_level)
 
         if plotter is not None:
             self.plotter = plotter
-        elif params.plot:
+        elif self._params.plot:
             self.plotter = ParticlePlotter()
         else:
             self.plotter = None
@@ -51,10 +51,14 @@ class ParticleTrajectorySolver():
 
         DG0 = FunctionSpace(self.particle_vom, "DG", 0)
 
-        # Define a per-particle remainining time-step Function
+        # Define a per-particle remainining time-step Function and store it in the fields registry
         self.dt_remaining = Function(DG0, name="dt-remaining")
 
         self._fields = (self.dt_remaining, *self.stepper.fields)
+
+        # Pre-fetch cell-facet adjacency arrays to be used when resolving cell crossings
+        self._exterior_facet_mask = self.parent_mesh.topology.cell_to_facets.data_ro_with_halos[...,0] == 0
+        self._cell_facet_neighbours = self.parent_mesh.topology.cell_facet_neighbours.data_ro_with_halos
 
     @property
     def num_particles_local(self):
@@ -227,15 +231,14 @@ class ParticleTrajectorySolver():
                                 crossed_edge = other_edge
                                 break
                     crossed_edge_idxs[pid_local] = crossed_edge
-
-                ext_mask = self.parent_mesh.topology.cell_facet_exterior_mask
+                
                 state = np.full(len(particles_failed_idxs), "", dtype=object)
 
                 # Identify the neighbouring cell for each particle and compute its reference coordinates in that new cell
                 for i, pid_local in enumerate(particles_failed_idxs):
                     parent_cell = parent_cells[pid_local]
                     crossed_edge = crossed_edge_idxs[particles_failed_active_idxs[i]]
-                    next_cell = self.parent_mesh.topology.cell_facet_neighbours.data_ro_with_halos[parent_cell, crossed_edge]
+                    next_cell = self._cell_facet_neighbours[parent_cell, crossed_edge]
 
                     if next_cell != -1:
                         # Owned or ghost -> transfer and keep stepping
@@ -246,7 +249,7 @@ class ParticleTrajectorySolver():
                             state[i] = "crossed into owned cell"
                         else: 
                             state[i] = "crossed into ghost cell"
-                    elif ext_mask[parent_cell, crossed_edge]:
+                    elif self._exterior_facet_mask[parent_cell, crossed_edge]:
                         # At domain boundary -> absorb the particle
                         boundary_particles_current.append(pid_local)
                         dt_remaining_arr[pid_local] = 0 
@@ -260,9 +263,9 @@ class ParticleTrajectorySolver():
                 
                 self.logger.print_particles("Failed particles - Cell transitions",
                                             {
-                                                "parent_cell": parent_cells[particles_failed_idxs, 0],
+                                                "parent_cell": parent_cells[particles_failed_idxs],
                                                 "crossed_edge": crossed_edge_idxs[particles_failed_active_idxs],
-                                                "new_parent_cell": new_parent_cells[particles_failed_idxs, 0],
+                                                "new_parent_cell": new_parent_cells[particles_failed_idxs],
                                                 "state": state,
                                                 "X_new": new_ref_pos[particles_failed_idxs]
                                             },
@@ -301,7 +304,7 @@ class ParticleTrajectorySolver():
                         "The particle trajectory solver terminated due to no particles remaining in the domain."
                     )
                 
-                topo._migrate_functions()
+                topo._migrate_functions(functions_to_migrate=self._fields)
 
                 # Debug
                 print(f"[rank {self.particle_vom.comm.rank}] post-rebuild: "

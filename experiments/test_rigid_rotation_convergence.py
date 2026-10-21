@@ -52,14 +52,7 @@ def run(dt):
     # Define the solvers
     stepper = ForwardEulerStepper(particle_vom, dt, v) # -- pass the velocity function
     cell_crossing_solver = BisectionSolver()
-    particle_traj_solver_params = ParticleTrajectorySolverParams(
-        bary_tol=1e-9,
-        abs_time_tol=1e-9,
-        rel_time_tol=0,
-        max_iters=50,
-        plot=False
-    )
-    particle_traj_solver = ParticleTrajectorySolver(stepper, cell_crossing_solver, particle_traj_solver_params)
+    particle_traj_solver = ParticleTrajectorySolver(stepper, cell_crossing_solver)
 
     time = 0.0
     init_pos = particle_vom.coordinates.dat.data_ro.copy()

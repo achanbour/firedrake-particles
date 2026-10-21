@@ -109,8 +109,6 @@ print("Number of bisection calls to resolve cell crossings: ", BISECTION_COUNT)
 # Visually, we can see particles moving away from the center of the circle they started on.
 # This drift is due to the fact that, under Forward Euler, the radius ||q^n - c||^2 
 # grows by a factor O(1+dt^2*omega*2) at each step.
-# In reality, we are overestimating the FE error and the drift is smaller because of the crossing solver algorithm.
-
 # For more accurate results, use a structure-preserving scheme such as the implicit midpoint rule.
 
 # --- exact solution ---
@@ -141,7 +139,7 @@ angN = np.arctan2(final_pos[:,1]-c[1], final_pos[:,0]-c[0])
 dang = np.mod(angN - ang0, 2*np.pi)
 assert np.allclose(dang, omega*t_end, rtol=1e-3), (dang, omega*t_end)
 
-# Check 3: numerical error is O(dt)
+# Check 3: numerical error - final position vs final expected position
 print("max final position error:", np.max(np.linalg.norm(final_pos - exact, axis=1)))
 
 

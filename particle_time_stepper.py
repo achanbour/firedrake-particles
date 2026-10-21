@@ -281,18 +281,3 @@ class StormerVerletStepper(ParticleTimeStepper):
     @property
     def v_ref(self):
         return self._v_half_ref_fn
-
-    
-    
-
-
-
-
-
-    
-
-
-
-
-
-        
