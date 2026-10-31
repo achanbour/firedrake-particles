@@ -36,7 +36,7 @@ class ParticleTrajectorySolver():
         
         self.ref_cell = self.parent_mesh.coordinates.function_space().finat_element.cell
 
-        self.particle_vom_updater = VertexOnlyMeshMutator(self.particle_vom)
+        self.particle_vom_mutator = VertexOnlyMeshMutator(self.particle_vom)
 
         self.logger = ParticleLogger(level=self._params.log_level)
 
@@ -58,13 +58,13 @@ class ParticleTrajectorySolver():
 
         # Pre-fetch cell-facet adjacency arrays to be used when resolving cell crossings
         self._exterior_facet_mask = self.parent_mesh.topology.cell_to_facets.data_ro_with_halos[...,0] == 0
-        self._cell_facet_neighbours = self.parent_mesh.topology.cell_facet_neighbours.data_ro_with_halos
+        self._cell_facet_neighbours = self.parent_mesh.topology.cell_facet_neighbours_dat.data_ro_with_halos
 
     @property
     def num_particles_local(self):
         # NOTE: VOM is constructed with overlap_type = (DistributedMeshOverlapType.NONE, 0) meaning that
         # a particle can only ever be a ghost if its parent cell is a ghost on a rank??
-        return self.particle_vom.cell_set.size
+        return self.particle_vom.topology.cells.owned.local_size
 
     def solve(self, t_start, t_end):
         self.outer_loop_iter = 0
@@ -273,7 +273,7 @@ class ParticleTrajectorySolver():
                                             level="info")
 
             # Update the particle VOM
-            self.particle_vom_updater.commit_reference_state(new_parent_cells, new_ref_pos)
+            self.particle_vom_mutator.commit_reference_state(new_parent_cells, new_ref_pos)
     
 
             self.dt_remaining.dat.data_wo[:] = dt_remaining_arr
@@ -293,7 +293,7 @@ class ParticleTrajectorySolver():
                 # Update the VOM's physical coordinates
                 self.particle_vom.coordinates.dat.data_wo[:] = new_phys_coords.dat.data_ro
  
-                self.particle_vom_updater.rebuild_vom(
+                self.particle_vom_mutator.rebuild_vom(
                     absorbed_vom_indices=boundary_particles_current, 
                 )
 
@@ -303,8 +303,10 @@ class ParticleTrajectorySolver():
                     raise NoParticlesRemainingError(
                         "The particle trajectory solver terminated due to no particles remaining in the domain."
                     )
-                
-                topo._migrate_functions(functions_to_migrate=self._fields)
+
+                # Migrate the fields owned by the stepper
+                for field in self._fields:
+                    field._migrate_to_current_topology()
 
                 # Debug
                 print(f"[rank {self.particle_vom.comm.rank}] post-rebuild: "

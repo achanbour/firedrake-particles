@@ -8,7 +8,9 @@ from pathlib import Path
 from particle_time_stepper import StormerVerletStepper
 from particle_crossing_solver import BisectionSolver, BisectionSolverParams
 from particle_traj_solver import ParticleTrajectorySolver, ParticleTrajectorySolverParams
+
 from output_paths import experiment_results_dir
+from sv_stepper import accel, stormer_verlet_stepper
 
 """
 This examples solves for the trajectory of particles subject to an external force derived
@@ -36,7 +38,6 @@ x, y = SpatialCoordinate(parent_mesh)
 # x_new = x + 0.5*x**2*(1-x)
 # y_new = y + 0.5*y**2*(1-y)
 
-# TODO: halve the deformation
 x_new = x + 0.5*y*(1-y)
 y_new = y + 0.5*x*(1-x)
 
@@ -44,7 +45,6 @@ v.interpolate(as_vector([x_new, y_new]))
 curved_parent_mesh = Mesh(v)
 
 particle_vom = VertexOnlyMesh(curved_parent_mesh, q0)
-
 
 # -- Define the potential field
 # Harmonic potential is V(q) = 0.5 * omega**2 * (x-c)**2
@@ -61,19 +61,17 @@ accel_fn = Function(Va, name="acceleration").interpolate(accel_expr)
 
 # -- Initial velocity
 init_pos = particle_vom.coordinates.dat.data_ro.copy()
-# 50% slower than for a perfect circular motion -> ellipsis
+# eccentricitiy 0.5 means 50% slower than a perfect circular motion -> ellipsis
 V0 = 0.5 * omega * np.column_stack([-(init_pos[:, 1] - c[1]), init_pos[:, 0] - c[0]])
 
 # Solver setup
 t_start = 0
-# t_end = 0.2 # equal the period T with omega = 10*pi
-# dt = 1e-3 # 200 steps
-
-# Test with more periods...
-t_end = 1.0
+t_end = 1
 dt = 1e-3
 
-stepper = StormerVerletStepper(particle_vom, dt, accel_expr)
+correction=True
+tag = "with_correction" if correction else "without_correction"
+stepper = StormerVerletStepper(particle_vom, dt, accel_expr, geometric_correction=correction)
 stepper.v.dat.data_wo[:] = V0 # assign initial velocity
 
 cell_crossing_solver = BisectionSolver()
@@ -87,24 +85,28 @@ particle_traj_solver_params = ParticleTrajectorySolverParams(
 
 # ---- output ----
 output_dir = experiment_results_dir(__file__)
-VTKFile(str(output_dir / "output.pvd")).write(accel_fn)
-particle_file = VTKFile(str(output_dir / "particles.pvd"))
+# VTKFile(str(output_dir / "output.pvd")).write(accel_fn)
+# particle_file = VTKFile(str(output_dir / "particles.pvd"))
 
 
-def total_energy(pos, vel):
+def total_particle_energy(pos, vel):
+    """Total energy summed over all particles"""
     return np.sum(
         0.5*np.sum(vel ** 2, axis=1)
         + 0.5*omega**2*np.sum((pos - c)**2, axis=1)
     )
 
 E_hist, t_hist = [], []
-
+pos_hist, vel_hist = [], []
 def energy_monitor(t, solver):
     pos = solver.particle_vom.coordinates.dat.data_ro
     vel = solver.stepper.v.dat.data_ro
-    E_hist.append(total_energy(pos, vel))
+    E_hist.append(total_particle_energy(pos, vel))
     t_hist.append(t)
-    particle_file.write(solver.stepper.v, time=t)
+    # particle_file.write(solver.stepper.v, time=t)
+    # record full trajectory
+    pos_hist.append(pos.copy())
+    vel_hist.append(vel.copy())
 
 particle_traj_solver = ParticleTrajectorySolver(
     stepper, 
@@ -152,10 +154,42 @@ print("max radius drift:", radius_drift)
 # Check that the total energy of the system remains bounded throughout the simulation
 import matplotlib.pyplot as plt
 E = np.array(E_hist)
-plt.plot(t_hist, (E-E[0])/E[0])
+t = np.array(t_hist)
+plt.plot(t, (E-E[0])/E[0])
 plt.xlabel("t")
 plt.ylabel("(E-E0)/E0")
-plt.savefig(output_dir / "curved_sv_energy_drift.png", dpi=300)
+plt.savefig(output_dir / f"curved_sv_energy_drift_{tag}.png", dpi=300)
 
 print("max (E - E[0]))/E[0]:", np.max(np.abs(E - E[0]))/E[0])
 # assert np.max(np.abs(E - E[0]))/E[0] < 1e-3, "energy not bounded"
+
+# Compare Firedrake vs plain numpy SV
+def particle_energy(x, v):
+    """Energy of each particle"""
+    return 0.5*np.sum(v**2, axis=-1) + 0.5*omega**2*np.sum((x-c)**2,axis=-1)
+
+x_np, v_np = stormer_verlet_stepper(init_pos, V0, t, lambda x: accel(x, c, omega))
+E_np = particle_energy(x_np, v_np)
+
+x_fd, v_fd = np.array(pos_hist), np.array(vel_hist)
+
+diff_x = np.linalg.norm(x_fd - x_np, axis=-1)
+diff_E_rel = (particle_energy(x_fd, v_fd) - particle_energy(x_np, v_np)) / particle_energy(x_np, v_np)
+
+# print("max |x_fd- x_np| at t_end:", diff_x[-1].max())
+# print("max |E_fd - E_np|/E0 at t_end:", np.abs(diff_E_rel[-1]).max())
+
+fig, axes = plt.subplots(2, 1, sharex=True)
+axes[0].semilogy(t[1:], diff_x[1:].max(axis=1))
+axes[0].set_ylabel("max |x_fd - x_np|")
+axes[1].plot(t, diff_E_rel.max(axis=1), label="max over particles")
+axes[1].plot(t, diff_E_rel.min(axis=1), label="min over particles")
+axes[1].legend(loc="lower right")
+axes[1].set_ylabel("|E_fd - E_np|/E0"); axes[1].set_xlabel("t"); axes[1].legend()
+fig.savefig(output_dir / f"fd_vs_numpy_{tag}.png", dpi=300)
+
+
+
+
+
+

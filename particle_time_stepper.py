@@ -1,6 +1,4 @@
 from abc import ABC, abstractmethod
-from functools import partial
-from collections import namedtuple
 
 from firedrake.interpolation import interpolate, Interpolate, get_interpolator
 from firedrake.assemble import assemble
@@ -14,6 +12,7 @@ from ufl.operators import inv
 from ufl.core.expr import Expr
 from ufl.domain import extract_unique_domain
 from ufl.algorithms.analysis import extract_type
+from ufl import indices, as_vector
 
 
 class ParticleTimeStepper(ABC):
@@ -87,9 +86,15 @@ class ParticleTimeStepper(ABC):
     #     self.update_expr = self._build_update_expr()
     #     self.invalidate() # call invalidate to force parloops to be rebuilt
 
-    def _sample_on_particles(self, field, tensor=False):
-        FS = TensorFunctionSpace(self.particle_vom, "DG", 0) if tensor else VectorFunctionSpace(self.particle_vom, "DG", 0)
-        return interpolate(field, FS)
+    def _particle_space(self, shape=None):
+        if len(shape) == 0:
+            return FunctionSpace(self.particle_vom, "DG", 0)
+        if len(shape) == 1:
+            return VectorFunctionSpace(self.particle_vom, "DG", 0, dim=shape[0])
+        return TensorFunctionSpace(self.particle_vom, "DG", 0, shape=shape)
+
+    def _sample_on_particles(self, field):
+        return interpolate(field, self._particle_space(shape=field.ufl_shape))
 
     def _init_step_interp(self):
         self._step_interp = interpolate(self._update_expr, self._X.function_space())
@@ -156,9 +161,8 @@ class ForwardEulerStepper(ParticleTimeStepper):
         
         if not isinstance(dt, float):
             raise TypeError("Expected dt to be supplied as a float")
-        
-        VFS = VectorFunctionSpace(particle_vom, "DG", 0)
-        TFS = TensorFunctionSpace(particle_vom, "DG", 0)
+
+        VFS = self._particle_space(shape=v.ufl_shape)
         
         # Check if velocity is defined on the VOM or on the parent mesh
         if extract_unique_domain(v) is self.particle_vom:
@@ -170,8 +174,9 @@ class ForwardEulerStepper(ParticleTimeStepper):
     
         # Define quantities that should be refreshed per cell frame
         # -- invJ
+        TFS = self._particle_space(shape=self._invJ_expr.ufl_shape)
         self._invJ_fn = Function(TFS, name="particle-invJ")
-        self._invJ_interp = self._sample_on_particles(self._invJ_expr, tensor=True)
+        self._invJ_interp = self._sample_on_particles(self._invJ_expr)
 
         # -- v_ref = invJ * v
         self._v_ref_fn = Function(VFS, name="particle-v-ref")
@@ -213,7 +218,7 @@ class ForwardEulerStepper(ParticleTimeStepper):
 
 class StormerVerletStepper(ParticleTimeStepper):
 
-    def __init__(self, particle_vom, dt, a):
+    def __init__(self, particle_vom, dt, a, geometric_correction=True):
         super().__init__(particle_vom, dt)
         
         # Validation
@@ -222,8 +227,7 @@ class StormerVerletStepper(ParticleTimeStepper):
         
         self._a = a # physical acceleration -grad(phi)
 
-        VFS = VectorFunctionSpace(particle_vom, "DG", 0)
-        TFS = TensorFunctionSpace(particle_vom, "DG", 0)
+        VFS = self._particle_space(shape=a.ufl_shape)
 
         # Record acceleration at both the start and end of a time step
         self._a_start_fn = Function(VFS, name="particle-accel-start")
@@ -236,24 +240,51 @@ class StormerVerletStepper(ParticleTimeStepper):
         
         # Define quantities that should be refreshed per cell frame
         # -- invJ
-        self._invJ_fn = Function(TFS, name="particle-invJ")
-        self._invJ_interp = self._sample_on_particles(self._invJ_expr, tensor=True)
+        TFS_1 = self._particle_space(shape=self._invJ_expr.ufl_shape)
+        self._invJ_fn = Function(TFS_1, name="particle-invJ")
+        self._invJ_interp = self._sample_on_particles(self._invJ_expr)
 
         # -- v_half_ref = invJ * v_half
         self._v_half_ref_fn = Function(VFS, name="particle-v-half-ref")
         self._v_half_ref_interp = interpolate(self._invJ_fn * self._v_half_fn, VFS)
 
-        # Register interpolation expressions + fields
-        self._interp_exprs.extend([self._a_interp, self._invJ_interp, self._v_half_ref_interp])
-        self._fields.extend([self._a_start_fn, self._a_end_fn, self._v_fn, self._v_half_fn, self._v_half_ref_fn, self._invJ_fn])        
+        # NEW
+        x = SpatialCoordinate(self.particle_vom._parent_mesh)
+        # x = particle_vom._parent_mesh.coordinates
+        self._H_expr = ReferenceGrad(ReferenceGrad(x)) # Hessian of the geometric map
+        self._H_interp = self._sample_on_particles(self._H_expr)
+        TFS_2 = self._particle_space(shape=self._H_expr.ufl_shape)
+        self._H_fn = Function(TFS_2, name="particle-hessian")
 
+        i, p, q, r = indices(4)
+        self._corr_interp = interpolate(
+            as_vector(self._invJ_fn[i, p] * self._H_fn[p, q, r] * self._v_half_ref_fn[q] * self._v_half_ref_fn[r], i),
+            VFS
+        )
+        self._corr_fn = Function(VFS, name="particle-jacobian-correction")
+
+
+        # Register interpolation expressions + fields
+        self._interp_exprs.extend([self._a_interp, self._invJ_interp, self._v_half_ref_interp, self._H_interp, self._corr_interp])
+        self._fields.extend([self._a_start_fn, self._a_end_fn, self._v_fn, self._v_half_fn, self._v_half_ref_fn, self._invJ_fn, self._H_fn, self._corr_fn])        
+
+        self.geometric_correction = geometric_correction
         self._build_update_expr()
         self._init_step_interp()
 
-
-    def _build_update_expr(self):
+    
+    def _build_update_expr_original(self):
         """X(t + dt) = X(t) + dt * J^-1 * (v + dt/2 * a_start)"""
         self._update_expr = self._X + self._dt_fn * self._v_half_ref_fn # compute X^{n+1} using V_ref^{n+1/2}
+
+    def _build_update_expr(self):
+        if self.geometric_correction:
+            """X_{k+1} = X_k + h*Xdot_k - h^2/2 * J^{-1}_k * H_k[Xdot_k, Xdot_k]"""
+            self._update_expr = (self._X
+                         + self._dt_fn * self._v_half_ref_fn
+                         - 0.5 * self._dt_fn**2 * self._corr_fn)
+        else:
+            self._build_update_expr_original()
     
     def begin_outer_step(self, dt_step=None):
         super().begin_outer_step(dt_step)
@@ -264,8 +295,10 @@ class StormerVerletStepper(ParticleTimeStepper):
 
     def begin_substep(self):
         self._check_interp()
-        assemble(self._invJ_interp, tensor=self._invJ_fn) # cross-mesh -> current cell
-        assemble(self._v_half_ref_interp, tensor=self._v_half_ref_fn) # pointwise on VOM
+        assemble(self._invJ_interp, tensor=self._invJ_fn) # J^{-1}_k (cross-mesh)
+        assemble(self._v_half_ref_interp, tensor=self._v_half_ref_fn) # Xdot_k (pointwise)
+        assemble(self._H_interp, tensor=self._H_fn) # H_K (cross-mesh)
+        assemble(self._corr_interp, tensor=self._corr_fn) # correction (pointwise)
 
 
     def finalize_outer_step(self):
