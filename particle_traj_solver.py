@@ -243,7 +243,7 @@ class ParticleTrajectorySolver():
                     if next_cell != -1:
                         # Owned or ghost -> transfer and keep stepping
                         new_parent_cells[pid_local] = next_cell
-                        A_facet, b_facet = self.parent_mesh.topology.cell_facet_coord_transforms
+                        A_facet, b_facet = self.parent_mesh.topology.cell_facet_coord_transforms_dat
                         new_ref_pos[pid_local] = A_facet.data_ro_with_halos[parent_cell, crossed_edge] @ X_cross[i] + b_facet.data_ro_with_halos[parent_cell, crossed_edge]
                         if next_cell < self.particle_vom.cell_set.size:
                             state[i] = "crossed into owned cell"
